@@ -10,6 +10,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::errors::{ParamParseError, ParseError};
+use crate::tl::parameter_type::NormalParameterType;
 use crate::tl::{Category, Flag, Parameter, ParameterType, Type};
 use crate::utils::infer_id;
 
@@ -47,7 +48,7 @@ impl fmt::Display for Definition {
         // If any parameter references a generic, make sure to define it early
         let mut type_defs = vec![];
         for param in self.params.iter() {
-            if let ParameterType::Normal { ty, .. } = &param.ty {
+            if let ParameterType::Normal(NormalParameterType { ty, .. }) = &param.ty {
                 ty.find_generic_refs(&mut type_defs);
             }
         }
@@ -145,7 +146,7 @@ impl FromStr for Definition {
                     // If the parameter type is a generic ref ensure it's valid.
                     Parameter {
                         ty:
-                            ParameterType::Normal {
+                            ParameterType::Normal(NormalParameterType {
                                 ty:
                                     Type {
                                         ref full_name,
@@ -153,7 +154,7 @@ impl FromStr for Definition {
                                         ..
                                     },
                                 ..
-                            },
+                            }),
                         ..
                     } if !type_defs.contains(full_name) => {
                         Some(Err(ParseError::InvalidParam(ParamParseError::MissingDef)))
@@ -162,10 +163,10 @@ impl FromStr for Definition {
                     // If the parameter type references a flag ensure it's valid
                     Parameter {
                         ty:
-                            ParameterType::Normal {
+                            ParameterType::Normal(NormalParameterType {
                                 flag: Some(Flag { ref name, .. }),
                                 ..
-                            },
+                            }),
                         ..
                     } if !flag_defs.contains(name) => {
                         Some(Err(ParseError::InvalidParam(ParamParseError::MissingDef)))
@@ -332,10 +333,10 @@ mod tests {
         assert_eq!(def.params.len(), 1);
         assert!(matches!(
             def.params[0].ty,
-            ParameterType::Normal {
+            ParameterType::Normal (NormalParameterType{
                 ty: Type { generic_ref, .. },
                 ..
-            } if generic_ref
+            }) if generic_ref
         ));
         assert_eq!(
             def.ty,
@@ -394,7 +395,7 @@ mod tests {
                     },
                     Parameter {
                         name: "pname".into(),
-                        ty: ParameterType::Normal {
+                        ty: ParameterType::Normal(NormalParameterType {
                             ty: Type {
                                 full_name: "ns2.Vector".into(),
                                 name_start_idx: 4,
@@ -412,7 +413,7 @@ mod tests {
                                 name: "flags".into(),
                                 index: 10
                             })
-                        },
+                        }),
                     },
                 ],
                 ty: Type {

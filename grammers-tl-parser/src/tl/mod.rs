@@ -22,5 +22,5 @@ pub use category::Category;
 pub use definition::Definition;
 pub use flag::Flag;
 pub use parameter::Parameter;
-pub use parameter_type::ParameterType;
+pub use parameter_type::{NormalParameterType, ParameterType};
 pub use ty::Type;

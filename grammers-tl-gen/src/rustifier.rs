@@ -222,15 +222,17 @@ pub mod types {
 }
 
 pub mod parameters {
+    use grammers_tl_parser::tl::NormalParameterType;
+
     use super::*;
 
     pub fn qual_name(param: &Parameter) -> String {
         match &param.ty {
             ParameterType::Flags => "u32".into(),
-            ParameterType::Normal { ty, flag } if flag.is_some() && ty.name() == "true" => {
-                "bool".into()
-            }
-            ParameterType::Normal { ty, flag } => {
+            ParameterType::Normal(NormalParameterType { ty, flag }) => {
+                if flag.is_some() && ty.name() == "true" {
+                    return "bool".into();
+                }
                 let mut result = String::new();
                 if flag.is_some() {
                     result.push_str("Option<");

@@ -8,7 +8,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Type};
+use grammers_tl_parser::tl::{
+    Category, Definition, NormalParameterType, Parameter, ParameterType, Type,
+};
 
 /// Additional metadata required by several parts of the generation.
 pub(crate) struct Metadata<'a> {
@@ -31,9 +33,9 @@ impl<'a> Metadata<'a> {
                 .filter(|pf| matches!(pf.ty, ParameterType::Flags))
                 .for_each(|pf| {
                     if !d.params.iter().any(|pn| match &pn.ty {
-                        ParameterType::Normal {
+                        ParameterType::Normal(NormalParameterType {
                             flag: Some(flag), ..
-                        } => flag.name == pf.name,
+                        }) => flag.name == pf.name,
                         _ => false,
                     }) {
                         metadata
@@ -95,7 +97,7 @@ fn def_self_references(
     for param in check.params.iter() {
         match &param.ty {
             ParameterType::Flags => {}
-            ParameterType::Normal { ty, .. } => {
+            ParameterType::Normal(NormalParameterType { ty, .. }) => {
                 if ty.full_name() == root.ty.full_name() {
                     return true;
                 }

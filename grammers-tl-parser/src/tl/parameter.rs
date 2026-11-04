@@ -69,6 +69,7 @@ impl FromStr for Parameter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tl::parameter_type::NormalParameterType;
     use crate::tl::{Flag, Type};
 
     #[test]
@@ -145,7 +146,7 @@ mod tests {
             Parameter::from_str("foo:!bar"),
             Ok(Parameter {
                 name: "foo".into(),
-                ty: ParameterType::Normal {
+                ty: ParameterType::Normal(NormalParameterType {
                     ty: Type {
                         full_name: "bar".into(),
                         name_start_idx: 0,
@@ -154,14 +155,14 @@ mod tests {
                         generic_arg: None,
                     },
                     flag: None,
-                }
+                })
             })
         );
         assert_eq!(
             Parameter::from_str("foo:bar.1?baz"),
             Ok(Parameter {
                 name: "foo".into(),
-                ty: ParameterType::Normal {
+                ty: ParameterType::Normal(NormalParameterType {
                     ty: Type {
                         full_name: "baz".into(),
                         name_start_idx: 0,
@@ -173,14 +174,14 @@ mod tests {
                         name: "bar".into(),
                         index: 1,
                     }),
-                }
+                })
             })
         );
         assert_eq!(
             Parameter::from_str("foo:bar<baz>"),
             Ok(Parameter {
                 name: "foo".into(),
-                ty: ParameterType::Normal {
+                ty: ParameterType::Normal(NormalParameterType {
                     ty: Type {
                         full_name: "bar".into(),
                         name_start_idx: 0,
@@ -189,14 +190,14 @@ mod tests {
                         generic_arg: Some(Box::new("baz".parse().unwrap())),
                     },
                     flag: None,
-                }
+                })
             })
         );
         assert_eq!(
             Parameter::from_str("foo:bar.1?baz<qux>"),
             Ok(Parameter {
                 name: "foo".into(),
-                ty: ParameterType::Normal {
+                ty: ParameterType::Normal(NormalParameterType {
                     ty: Type {
                         full_name: "baz".into(),
                         name_start_idx: 0,
@@ -208,7 +209,7 @@ mod tests {
                         name: "bar".into(),
                         index: 1,
                     }),
-                }
+                })
             })
         );
     }

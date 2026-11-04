@@ -19,21 +19,25 @@ pub enum ParameterType {
     Flags,
 
     /// A "normal" type, which may depend on a flag.
-    Normal {
-        /// The actual type of the parameter.
-        ty: Type,
+    Normal(NormalParameterType),
+}
 
-        /// If this parameter is only present sometimes,
-        /// the flag upon which its presence depends.
-        flag: Option<Flag>,
-    },
+/// A named parameter type that might be behind a flag.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct NormalParameterType {
+    /// The actual type of the parameter.
+    pub ty: Type,
+
+    /// If this parameter is only present sometimes,
+    /// the flag upon which its presence depends.
+    pub flag: Option<Flag>,
 }
 
 impl fmt::Display for ParameterType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Flags => write!(f, "#"),
-            Self::Normal { ty, flag } => {
+            Self::Normal(NormalParameterType { ty, flag }) => {
                 if let Some(flag) = flag {
                     write!(f, "{flag}?")?;
                 }
@@ -71,6 +75,6 @@ impl FromStr for ParameterType {
         // Parse `type<generic_arg>`
         let ty = ty.parse()?;
 
-        Ok(ParameterType::Normal { ty, flag })
+        Ok(ParameterType::Normal(NormalParameterType { ty, flag }))
     }
 }

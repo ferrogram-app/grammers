@@ -10,7 +10,7 @@
 
 use std::io::{self, Write};
 
-use grammers_tl_parser::tl::{Category, Definition, ParameterType};
+use grammers_tl_parser::tl::{Category, Definition, NormalParameterType, ParameterType};
 
 use crate::grouper;
 use crate::metadata::Metadata;
@@ -27,7 +27,7 @@ fn get_generic_param_list(def: &Definition, trait_bounds: &str) -> String {
     for param in def.params.iter() {
         match param.ty {
             ParameterType::Flags => {}
-            ParameterType::Normal { ref ty, .. } => {
+            ParameterType::Normal(NormalParameterType { ref ty, .. }) => {
                 if ty.generic_ref {
                     if result.is_empty() {
                         result.push('<');
@@ -103,7 +103,7 @@ fn write_struct<W: Write>(
             ParameterType::Flags => {
                 // Flags are computed on-the-fly, not stored
             }
-            ParameterType::Normal { ty, .. } => {
+            ParameterType::Normal(NormalParameterType { ty, .. }) => {
                 if config.impl_serde && ty.name() == "bytes" {
                     writeln!(file, "{}    #[serde(with = \"serde_bytes\")]", indent)?;
                 }
@@ -208,10 +208,10 @@ fn write_serializable<W: Write>(
                 // Compute flags as a single expression
                 for p in def.params.iter() {
                     match &p.ty {
-                        ParameterType::Normal {
+                        ParameterType::Normal(NormalParameterType {
                             ty,
                             flag: Some(flag),
-                        } if flag.name == param.name => {
+                        }) if flag.name == param.name => {
                             // We make sure this `p` uses the flag we're currently
                             // parsing by comparing (`p`'s) `flag.name == param.name`.
 
@@ -235,7 +235,7 @@ fn write_serializable<W: Write>(
 
                 writeln!(file, ").serialize(sink);")?;
             }
-            ParameterType::Normal { ty, flag } => {
+            ParameterType::Normal(NormalParameterType { ty, flag }) => {
                 // The `true` bare type is a bit special: it's empty so there
                 // is not need to serialize it, but it's used enough to deserve
                 // a special case and ignore it.
@@ -311,7 +311,7 @@ fn write_deserializable<W: Write>(
                     rustifier::parameters::attr_name(param)
                 )?;
             }
-            ParameterType::Normal { ty, flag } => {
+            ParameterType::Normal(NormalParameterType { ty, flag }) => {
                 if ty.name() == "true" {
                     let flag = flag
                         .as_ref()
