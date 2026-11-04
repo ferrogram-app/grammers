@@ -18,12 +18,11 @@ use crate::utils::infer_id;
 /// [Type Language]: https://core.telegram.org/mtproto/TL
 #[derive(Debug, PartialEq)]
 pub struct Definition {
-    /// The namespace components of the definition. This list will be empty
-    /// if the name of the definition belongs to the global namespace.
-    pub namespace: Vec<String>,
+    /// The full name of this definition.
+    full_name: String,
 
-    /// The name of this definition. Also known as "predicate" or "method".
-    pub name: String,
+    /// Optimization to quickly query the name part from the full name.
+    name_start_idx: usize,
 
     /// The numeric identifier of this definition.
     ///
@@ -43,10 +42,7 @@ pub struct Definition {
 
 impl fmt::Display for Definition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for ns in self.namespace.iter() {
-            write!(f, "{ns}.")?;
-        }
-        write!(f, "{}#{:x}", self.name, self.id)?;
+        write!(f, "{}#{:x}", self.full_name, self.id)?;
 
         // If any parameter references a generic, make sure to define it early
         let mut type_defs = vec![];
@@ -109,19 +105,10 @@ impl FromStr for Definition {
         };
 
         // Parse `ns1.ns2.name`
-        let (namespace, name) = match name.rsplit_once('.') {
-            Some((namespace, name)) => (
-                namespace
-                    .split('.')
-                    .map(|part| part.to_owned())
-                    .collect::<Vec<_>>(),
-                name,
-            ),
-            None => (Vec::new(), name),
-        };
-        if namespace.iter().any(|part| part.is_empty()) || name.is_empty() {
+        if name.split('.').any(|part| part.is_empty()) {
             return Err(ParseError::MissingName);
         }
+        let name_start_idx = name.rfind('.').map(|i| i + 1).unwrap_or_default();
 
         // Parse `id`
         let id = match id {
@@ -161,14 +148,14 @@ impl FromStr for Definition {
                             ParameterType::Normal {
                                 ty:
                                     Type {
-                                        ref name,
+                                        ref full_name,
                                         generic_ref: true,
                                         ..
                                     },
                                 ..
                             },
                         ..
-                    } if !type_defs.contains(name) => {
+                    } if !type_defs.contains(full_name) => {
                         Some(Err(ParseError::InvalidParam(ParamParseError::MissingDef)))
                     }
 
@@ -198,13 +185,13 @@ impl FromStr for Definition {
 
         // The type lacks `!` so we determine if it's a generic one based
         // on whether its name is known in a previous parameter type def.
-        if type_defs.contains(&ty.name) {
+        if type_defs.contains(&ty.full_name) {
             ty.generic_ref = true;
         }
 
         Ok(Definition {
-            namespace,
-            name: name.to_owned(),
+            full_name: name.to_owned(),
+            name_start_idx,
             id,
             params,
             ty,
@@ -214,17 +201,24 @@ impl FromStr for Definition {
 }
 
 impl Definition {
-    /// Convenience function to format both the namespace and name back into a single string.
-    pub fn full_name(&self) -> String {
-        let mut result = String::with_capacity(
-            self.namespace.iter().map(|ns| ns.len() + 1).sum::<usize>() + self.name.len(),
-        );
-        for ns in self.namespace.iter() {
-            result.push_str(ns);
-            result.push('.');
-        }
-        result.push_str(&self.name);
-        result
+    /// The dot-separated namespace string, if any.
+    ///
+    /// To date, no Telegram definitions contain a nested namespace.
+    pub fn namespace(&self) -> Option<&str> {
+        self.name_start_idx
+            .checked_sub(1)
+            .map(|i| &self.full_name[..i])
+    }
+
+    // The name of this definition. Also known as "predicate" or "method".
+    pub fn name(&self) -> &str {
+        &self.full_name[self.name_start_idx..]
+    }
+
+    /// The full name of this definition,
+    /// with namespace and name joined by a dot.
+    pub fn full_name(&self) -> &str {
+        &self.full_name
     }
 }
 
@@ -288,14 +282,14 @@ mod tests {
     #[test]
     fn parse_valid_definition() {
         let def = Definition::from_str("a#1=d").unwrap();
-        assert_eq!(def.name, "a");
+        assert_eq!(def.full_name, "a");
         assert_eq!(def.id, 1);
         assert_eq!(def.params.len(), 0);
         assert_eq!(
             def.ty,
             Type {
-                namespace: vec![],
-                name: "d".into(),
+                full_name: "d".into(),
+                name_start_idx: 0,
                 bare: true,
                 generic_ref: false,
                 generic_arg: None,
@@ -303,14 +297,14 @@ mod tests {
         );
 
         let def = Definition::from_str("a=d<e>").unwrap();
-        assert_eq!(def.name, "a");
+        assert_eq!(def.full_name, "a");
         assert_ne!(def.id, 0);
         assert_eq!(def.params.len(), 0);
         assert_eq!(
             def.ty,
             Type {
-                namespace: vec![],
-                name: "d".into(),
+                full_name: "d".into(),
+                name_start_idx: 0,
                 bare: true,
                 generic_ref: false,
                 generic_arg: Some(Box::new("e".parse().unwrap())),
@@ -318,14 +312,14 @@ mod tests {
         );
 
         let def = Definition::from_str("a b:c = d").unwrap();
-        assert_eq!(def.name, "a");
+        assert_eq!(def.full_name, "a");
         assert_ne!(def.id, 0);
         assert_eq!(def.params.len(), 1);
         assert_eq!(
             def.ty,
             Type {
-                namespace: vec![],
-                name: "d".into(),
+                full_name: "d".into(),
+                name_start_idx: 0,
                 bare: true,
                 generic_ref: false,
                 generic_arg: None,
@@ -333,7 +327,7 @@ mod tests {
         );
 
         let def = Definition::from_str("a#1 {b:Type} c:!b = d").unwrap();
-        assert_eq!(def.name, "a");
+        assert_eq!(def.full_name, "a");
         assert_eq!(def.id, 1);
         assert_eq!(def.params.len(), 1);
         assert!(matches!(
@@ -346,8 +340,8 @@ mod tests {
         assert_eq!(
             def.ty,
             Type {
-                namespace: vec![],
-                name: "d".into(),
+                full_name: "d".into(),
+                name_start_idx: 0,
                 bare: true,
                 generic_ref: false,
                 generic_arg: None,
@@ -390,8 +384,8 @@ mod tests {
         assert_eq!(
             Definition::from_str(def),
             Ok(Definition {
-                namespace: vec!["ns1".into()],
-                name: "name".into(),
+                full_name: "ns1.name".into(),
+                name_start_idx: 4,
                 id: 0x123,
                 params: vec![
                     Parameter {
@@ -402,13 +396,13 @@ mod tests {
                         name: "pname".into(),
                         ty: ParameterType::Normal {
                             ty: Type {
-                                namespace: vec!["ns2".into()],
-                                name: "Vector".into(),
+                                full_name: "ns2.Vector".into(),
+                                name_start_idx: 4,
                                 bare: false,
                                 generic_ref: false,
                                 generic_arg: Some(Box::new(Type {
-                                    namespace: vec![],
-                                    name: "X".into(),
+                                    full_name: "X".into(),
+                                    name_start_idx: 0,
                                     bare: false,
                                     generic_ref: true,
                                     generic_arg: None,
@@ -422,8 +416,8 @@ mod tests {
                     },
                 ],
                 ty: Type {
-                    namespace: vec!["ns3".into()],
-                    name: "Type".into(),
+                    full_name: "ns3.Type".into(),
+                    name_start_idx: 4,
                     bare: false,
                     generic_ref: false,
                     generic_arg: None,

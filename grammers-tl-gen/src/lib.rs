@@ -77,7 +77,7 @@ impl Default for Config {
 const SPECIAL_CASED_TYPES: [&str; 1] = ["Bool"];
 
 fn ignore_type(ty: &Type) -> bool {
-    SPECIAL_CASED_TYPES.iter().any(|&x| x == ty.name)
+    SPECIAL_CASED_TYPES.iter().any(|&x| x == ty.full_name())
 }
 
 /// Generate the Rust code into the provided outputs for the given parsed definitions.

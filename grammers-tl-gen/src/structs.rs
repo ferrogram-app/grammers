@@ -34,7 +34,7 @@ fn get_generic_param_list(def: &Definition, trait_bounds: &str) -> String {
                     } else {
                         result.push_str(", ");
                     }
-                    result.push_str(&ty.name);
+                    result.push_str(ty.name());
                     result.push_str(trait_bounds);
                 }
             }
@@ -104,7 +104,7 @@ fn write_struct<W: Write>(
                 // Flags are computed on-the-fly, not stored
             }
             ParameterType::Normal { ty, .. } => {
-                if config.impl_serde && ty.name.as_str() == "bytes" {
+                if config.impl_serde && ty.name() == "bytes" {
                     writeln!(file, "{}    #[serde(with = \"serde_bytes\")]", indent)?;
                 }
                 writeln!(
@@ -221,7 +221,11 @@ fn write_serializable<W: Write>(
                                 file,
                                 " | if self.{}{} {{ {} }} else {{ 0 }}",
                                 rustifier::parameters::attr_name(p),
-                                if ty.name == "true" { "" } else { ".is_some()" },
+                                if ty.name() == "true" {
+                                    ""
+                                } else {
+                                    ".is_some()"
+                                },
                                 1 << flag.index
                             )?;
                         }
@@ -235,7 +239,7 @@ fn write_serializable<W: Write>(
                 // The `true` bare type is a bit special: it's empty so there
                 // is not need to serialize it, but it's used enough to deserve
                 // a special case and ignore it.
-                if ty.name != "true" {
+                if ty.name() != "true" {
                     if flag.is_some() {
                         writeln!(
                             file,
@@ -308,7 +312,7 @@ fn write_deserializable<W: Write>(
                 )?;
             }
             ParameterType::Normal { ty, flag } => {
-                if ty.name == "true" {
+                if ty.name() == "true" {
                     let flag = flag
                         .as_ref()
                         .expect("the `true` type must always be used in a flag");
@@ -326,7 +330,7 @@ fn write_deserializable<W: Write>(
                         write!(file, "{indent}            Some(")?;
                     }
                     if ty.generic_ref {
-                        write!(file, "{}::deserialize(buf)?", ty.name)?;
+                        write!(file, "{}::deserialize(buf)?", ty.name())?;
                     } else {
                         write!(
                             file,
@@ -484,7 +488,7 @@ fn write_definition<W: Write>(
     if def.category == Category::Types
         || config.deserializable_functions
         // special-case needed for update handling
-        || def.name == "sendMessage"
+        || def.name() == "sendMessage"
     {
         write_deserializable(file, indent, def, metadata)?;
     }

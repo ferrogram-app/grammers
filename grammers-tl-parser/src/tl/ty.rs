@@ -14,11 +14,11 @@ use crate::errors::ParamParseError;
 /// The type of a definition or a parameter.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Type {
-    /// The namespace components of the type.
-    pub namespace: Vec<String>,
+    /// The full name of this type.
+    pub(crate) full_name: String,
 
-    /// The name of the type.
-    pub name: String,
+    /// Optimization to quickly query the name part from the full name.
+    pub(crate) name_start_idx: usize,
 
     /// Whether this type is bare or boxed.
     pub bare: bool,
@@ -32,13 +32,10 @@ pub struct Type {
 
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for ns in self.namespace.iter() {
-            write!(f, "{ns}.")?;
-        }
         if self.generic_ref {
             write!(f, "!")?;
         }
-        write!(f, "{}", self.name)?;
+        write!(f, "{}", self.full_name)?;
         if let Some(generic_arg) = &self.generic_arg {
             write!(f, "<{generic_arg}>")?;
         }
@@ -47,11 +44,30 @@ impl fmt::Display for Type {
 }
 
 impl Type {
+    /// The dot-separated namespace string, if any.
+    ///
+    /// To date, no Telegram types contain a nested namespace.
+    pub fn namespace(&self) -> Option<&str> {
+        self.name_start_idx
+            .checked_sub(1)
+            .map(|i| &self.full_name[..i])
+    }
+
+    // The name of this type.
+    pub fn name(&self) -> &str {
+        &self.full_name[self.name_start_idx..]
+    }
+
+    /// The full name of this type, with namespace and name joined by a dot.
+    pub fn full_name(&self) -> &str {
+        &self.full_name
+    }
+
     /// Find all the nested generic references in this type, and appends them
     /// to the input vector.Box
     pub(crate) fn find_generic_refs<'a>(&'a self, output: &mut Vec<&'a str>) {
         if self.generic_ref {
-            output.push(&self.name);
+            output.push(&self.full_name);
         }
         if let Some(generic_arg) = &self.generic_arg {
             generic_arg.find_generic_refs(output);
@@ -88,28 +104,20 @@ impl FromStr for Type {
         };
 
         // Parse `ns1.ns2.name`
-        let (namespace, name) = match name.rsplit_once('.') {
-            Some((namespace, name)) => (
-                namespace
-                    .split('.')
-                    .map(|part| part.to_owned())
-                    .collect::<Vec<_>>(),
-                name,
-            ),
-            None => (Vec::new(), name),
-        };
-        let (false, Some(first_name_char)) = (
-            namespace.iter().any(|part| part.is_empty()),
-            name.chars().next(),
-        ) else {
+        if name.split('.').any(|part| part.is_empty()) {
+            return Err(ParamParseError::Empty);
+        }
+        let name_start_idx = name.rfind('.').map(|i| i + 1).unwrap_or_default();
+
+        let Some(first_name_char) = name[name_start_idx..].chars().next() else {
             return Err(ParamParseError::Empty);
         };
 
         let bare = first_name_char.is_ascii_lowercase();
 
         Ok(Self {
-            namespace,
-            name: name.to_owned(),
+            full_name: name.to_owned(),
+            name_start_idx,
             bare,
             generic_ref,
             generic_arg,
@@ -131,8 +139,8 @@ mod tests {
         assert_eq!(
             Type::from_str("foo"),
             Ok(Type {
-                namespace: vec![],
-                name: "foo".into(),
+                full_name: "foo".into(),
+                name_start_idx: 0,
                 bare: true,
                 generic_ref: false,
                 generic_arg: None,
@@ -155,8 +163,8 @@ mod tests {
         assert_eq!(
             Type::from_str("foo.bar.baz"),
             Ok(Type {
-                namespace: vec!["foo".into(), "bar".into()],
-                name: "baz".into(),
+                full_name: "foo.bar.baz".into(),
+                name_start_idx: 8,
                 bare: true,
                 generic_ref: false,
                 generic_arg: None,

@@ -75,16 +75,16 @@ pub mod definitions {
     use super::*;
 
     pub fn type_name(def: &Definition) -> String {
-        rusty_type_name(&def.name)
+        rusty_type_name(&def.name())
     }
 
     pub fn qual_name(def: &Definition) -> String {
         let mut result = String::new();
         result.push_str("crate::types::");
-        def.namespace.iter().for_each(|ns| {
+        if let Some(ns) = def.namespace() {
             result.push_str(ns);
             result.push_str("::");
-        });
+        };
         result.push_str(&type_name(def));
         result
     }
@@ -128,10 +128,7 @@ pub struct TypeNameFmt<'t>(pub &'t Type);
 
 impl<'t> fmt::Display for TypeNameFmt<'t> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for ns in self.0.namespace.iter() {
-            write!(f, "{}.", ns)?;
-        }
-        write!(f, "{}", self.0.name)
+        f.write_str(self.0.full_name())
     }
 }
 
@@ -139,7 +136,7 @@ pub mod types {
     use super::*;
 
     fn builtin_type(ty: &Type, path: bool) -> Option<&'static str> {
-        Some(match ty.name.as_ref() {
+        Some(match ty.name() {
             "Bool" => "bool",
             "bytes" => {
                 if path {
@@ -179,7 +176,7 @@ pub mod types {
     // 2. missing angle brackets in associated item path
     fn get_path(ty: &Type, path: bool) -> String {
         if ty.generic_ref {
-            return ty.name.clone();
+            return ty.name().to_owned();
         }
 
         let mut result = if let Some(name) = builtin_type(ty, path) {
@@ -191,10 +188,10 @@ pub mod types {
             } else {
                 result.push_str("crate::enums::");
             }
-            ty.namespace.iter().for_each(|ns| {
+            if let Some(ns) = ty.namespace() {
                 result.push_str(ns);
                 result.push_str("::");
-            });
+            };
             result.push_str(&type_name(ty));
             result
         };
@@ -212,7 +209,7 @@ pub mod types {
     }
 
     pub fn type_name(ty: &Type) -> String {
-        rusty_type_name(&ty.name)
+        rusty_type_name(&ty.name())
     }
 
     pub fn qual_name(ty: &Type) -> String {
@@ -230,7 +227,7 @@ pub mod parameters {
     pub fn qual_name(param: &Parameter) -> String {
         match &param.ty {
             ParameterType::Flags => "u32".into(),
-            ParameterType::Normal { ty, flag } if flag.is_some() && ty.name == "true" => {
+            ParameterType::Normal { ty, flag } if flag.is_some() && ty.name() == "true" => {
                 "bool".into()
             }
             ParameterType::Normal { ty, flag } => {

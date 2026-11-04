@@ -13,8 +13,8 @@ use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Typ
 /// Additional metadata required by several parts of the generation.
 pub(crate) struct Metadata<'a> {
     recursing_defs: HashSet<u32>,
-    defs_with_type: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Definition>>,
-    unused_flags: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Parameter>>,
+    defs_with_type: HashMap<&'a str, Vec<&'a Definition>>,
+    unused_flags: HashMap<&'a str, Vec<&'a Parameter>>,
 }
 
 impl<'a> Metadata<'a> {
@@ -38,7 +38,7 @@ impl<'a> Metadata<'a> {
                     }) {
                         metadata
                             .unused_flags
-                            .entry((&d.namespace, &d.name))
+                            .entry(d.full_name())
                             .or_default()
                             .push(pf)
                     }
@@ -53,7 +53,7 @@ impl<'a> Metadata<'a> {
         type_definitions.iter().for_each(|d| {
             metadata
                 .defs_with_type
-                .entry((&d.ty.namespace, &d.ty.name))
+                .entry(d.ty.full_name())
                 .or_default()
                 .push(d);
         });
@@ -69,7 +69,7 @@ impl<'a> Metadata<'a> {
 
     pub fn is_unused_flag(&self, def: &Definition, flag: &Parameter) -> bool {
         self.unused_flags
-            .get(&(&def.namespace, &def.name))
+            .get(def.full_name())
             .map(|flags| flags.contains(&flag))
             .unwrap_or(false)
     }
@@ -81,14 +81,14 @@ impl<'a> Metadata<'a> {
     }
 
     pub fn defs_with_type(&self, ty: &'a Type) -> &Vec<&Definition> {
-        &self.defs_with_type[&(&ty.namespace, &ty.name)]
+        &self.defs_with_type[ty.full_name()]
     }
 }
 
 fn def_self_references(
     root: &Definition,
     check: &Definition,
-    defs_with_type: &HashMap<(&Vec<String>, &String), Vec<&Definition>>,
+    defs_with_type: &HashMap<&str, Vec<&Definition>>,
     visited: &mut HashSet<u32>,
 ) -> bool {
     visited.insert(check.id);
@@ -96,11 +96,11 @@ fn def_self_references(
         match &param.ty {
             ParameterType::Flags => {}
             ParameterType::Normal { ty, .. } => {
-                if ty.namespace == root.ty.namespace && ty.name == root.ty.name {
+                if ty.full_name() == root.ty.full_name() {
                     return true;
                 }
 
-                if let Some(defs) = defs_with_type.get(&(&ty.namespace, &ty.name)) {
+                if let Some(defs) = defs_with_type.get(ty.full_name()) {
                     for def in defs {
                         if visited.contains(&def.id) {
                             continue;

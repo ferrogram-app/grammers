@@ -147,8 +147,8 @@ mod tests {
                 name: "foo".into(),
                 ty: ParameterType::Normal {
                     ty: Type {
-                        namespace: vec![],
-                        name: "bar".into(),
+                        full_name: "bar".into(),
+                        name_start_idx: 0,
                         bare: true,
                         generic_ref: true,
                         generic_arg: None,
@@ -163,8 +163,8 @@ mod tests {
                 name: "foo".into(),
                 ty: ParameterType::Normal {
                     ty: Type {
-                        namespace: vec![],
-                        name: "baz".into(),
+                        full_name: "baz".into(),
+                        name_start_idx: 0,
                         bare: true,
                         generic_ref: false,
                         generic_arg: None,
@@ -182,8 +182,8 @@ mod tests {
                 name: "foo".into(),
                 ty: ParameterType::Normal {
                     ty: Type {
-                        namespace: vec![],
-                        name: "bar".into(),
+                        full_name: "bar".into(),
+                        name_start_idx: 0,
                         bare: true,
                         generic_ref: false,
                         generic_arg: Some(Box::new("baz".parse().unwrap())),
@@ -198,8 +198,8 @@ mod tests {
                 name: "foo".into(),
                 ty: ParameterType::Normal {
                     ty: Type {
-                        namespace: vec![],
-                        name: "baz".into(),
+                        full_name: "baz".into(),
+                        name_start_idx: 0,
                         bare: true,
                         generic_ref: false,
                         generic_arg: Some(Box::new("qux".parse().unwrap())),

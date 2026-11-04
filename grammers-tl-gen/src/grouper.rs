@@ -23,13 +23,13 @@ pub(crate) fn group_by_ns(
         .filter(|d| d.category == category)
         .for_each(|d| {
             // We currently only handle zero or one namespace.
-            assert!(d.namespace.len() <= 1);
-            let ns = d.namespace.first().map(|x| &x[..]).unwrap_or("");
+            let ns = d.namespace().unwrap_or_default();
+            assert!(!ns.contains('.'));
             result.entry(ns.into()).or_default().push(d);
         });
 
     for vec in result.values_mut() {
-        vec.sort_by_key(|d| &d.name);
+        vec.sort_by_key(|d| d.name());
     }
     result
 }
@@ -42,15 +42,16 @@ pub(crate) fn group_types_by_ns(definitions: &[Definition]) -> HashMap<Option<St
         .filter(|d| d.category == Category::Types && !d.ty.generic_ref)
         .for_each(|d| {
             // We currently only handle zero or one namespace.
-            assert!(d.namespace.len() <= 1);
+            let ns = d.namespace();
+            assert!(ns.is_none_or(|ns| !ns.contains('.')));
             result
-                .entry(d.namespace.first().cloned())
+                .entry(ns.map(|ns| ns.to_owned()))
                 .or_default()
                 .push(&d.ty);
         });
 
     for vec in result.values_mut() {
-        vec.sort_by_key(|t| &t.name);
+        vec.sort_by_key(|t| t.name());
         vec.dedup();
     }
     result
