@@ -75,7 +75,7 @@ pub mod definitions {
     use super::*;
 
     pub fn type_name(def: &Definition) -> String {
-        rusty_type_name(&def.name())
+        rusty_type_name(def.name())
     }
 
     pub fn qual_name(def: &Definition) -> String {
@@ -209,7 +209,7 @@ pub mod types {
     }
 
     pub fn type_name(ty: &Type) -> String {
-        rusty_type_name(&ty.name())
+        rusty_type_name(ty.name())
     }
 
     pub fn qual_name(ty: &Type) -> String {
