@@ -103,6 +103,7 @@ impl Channel {
                             send_paid_messages_stars: None,
                             forum_tabs: false,
                             in_news: false,
+                            forum_sidebar: false,
                             linked_monoforum_id: None,
                             linked_community_id: None,
                             pinned_msg_id: None,
