@@ -13,7 +13,7 @@ use crate::errors::ParamParseError;
 use crate::tl::{Flag, Type};
 
 /// A parameter type.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ParameterType {
     /// This parameter represents a flags field (`u32`).
     Flags,
@@ -23,7 +23,7 @@ pub enum ParameterType {
 }
 
 /// A named parameter type that might be behind a flag.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NormalParameterType {
     /// The actual type of the parameter.
     pub ty: Type,

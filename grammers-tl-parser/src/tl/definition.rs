@@ -17,7 +17,7 @@ use crate::utils::infer_id;
 /// A [Type Language] definition.
 ///
 /// [Type Language]: https://core.telegram.org/mtproto/TL
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Definition {
     /// The full name of this definition.
     full_name: String,
