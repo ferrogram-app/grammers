@@ -14,7 +14,7 @@ categories = ["cryptography"]
 edition = "2024"
 
 [dependencies]
-aes = "0.9.3"
+aes = "0.9.4"
 getrandom = "0.4.3"
 glass_pumpkin = "2.0.0"
 hmac = "0.13.0"
@@ -27,7 +27,7 @@ ctr = "0.10.1"
 
 [dev-dependencies]
 bencher = "0.1.5"
-toml = "1.1.8"
+toml = "1.2.1"
 
 [[bench]]
 name = "cipher"
