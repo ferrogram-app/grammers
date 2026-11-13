@@ -62,7 +62,7 @@ impl Transport for Full {
         };
         buffer.extend_back(&crc.to_le_bytes());
 
-        self.send_seq += 1;
+        self.send_seq = self.send_seq.wrapping_add(1);
     }
 
     fn unpack(&mut self, buffer: &mut [u8]) -> Result<UnpackedOffset, Error> {
@@ -78,7 +78,7 @@ impl Transport for Full {
         if len < 12 {
             if len < 0 {
                 return Err(Error::BadStatus {
-                    status: (-len) as u32,
+                    status: len.unsigned_abs(),
                 });
             }
             return Err(Error::BadLen { got: len });
@@ -114,7 +114,7 @@ impl Transport for Full {
             });
         }
 
-        self.recv_seq += 1;
+        self.recv_seq = self.recv_seq.wrapping_add(1);
         Ok(UnpackedOffset {
             data_range: 8..len - 4,
             next_offset: len,

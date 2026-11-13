@@ -18,12 +18,12 @@ use std::path::Path;
 use std::sync::Arc;
 use std::{env, io};
 
+use mime::Mime;
+use mime_guess::mime;
 use mtg_client::media::Media;
 use mtg_client::{Client, SignInError};
 use mtg_mtsender::SenderPool;
 use mtg_session::storages::SqliteSession;
-use mime::Mime;
-use mime_guess::mime;
 use tokio::runtime;
 use tracing::info;
 
@@ -44,7 +44,7 @@ async fn async_main() -> Result<()> {
 
     let SenderPool { runner, handle, .. } = SenderPool::new(Arc::clone(&session), api_id);
     let client = Client::new(handle);
-    let _ = tokio::spawn(runner.run());
+    tokio::spawn(runner.run());
 
     if !client.is_authorized().await? {
         info!("Signing in...");
@@ -57,7 +57,7 @@ async fn async_main() -> Result<()> {
                 // Note: this `prompt` method will echo the password in the console.
                 //       Real code might want to use a better way to handle this.
                 let hint = password_token.hint().unwrap();
-                let prompt_message = format!("Enter the password (hint {}): ", &hint);
+                let prompt_message = format!("Enter the password (hint {}): ", hint);
                 let password = prompt(prompt_message.as_str())?;
 
                 client
@@ -93,11 +93,7 @@ async fn async_main() -> Result<()> {
         counter += 1;
         info!("Message {}:{}", msg.id(), msg.text());
         if let Some(media) = msg.media() {
-            let dest = format!(
-                "target/message-{}{}",
-                &msg.id().to_string(),
-                get_file_extension(&media)
-            );
+            let dest = format!("target/message-{}{}", msg.id(), get_file_extension(&media));
             client
                 .download_media(&media, &Path::new(dest.as_str()))
                 .await

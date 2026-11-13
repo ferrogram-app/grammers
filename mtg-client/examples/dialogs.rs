@@ -50,7 +50,7 @@ async fn async_main() -> Result<()> {
 
     let SenderPool { runner, handle, .. } = SenderPool::new(Arc::clone(&session), api_id);
     let client = Client::new(handle);
-    let _ = tokio::spawn(runner.run());
+    tokio::spawn(runner.run());
 
     if !client.is_authorized().await? {
         info!("Signing in...");
@@ -63,7 +63,7 @@ async fn async_main() -> Result<()> {
                 // Note: this `prompt` method will echo the password in the console.
                 //       Real code might want to use a better way to handle this.
                 let hint = password_token.hint().unwrap_or("None");
-                let prompt_message = format!("Enter the password (hint {}): ", &hint);
+                let prompt_message = format!("Enter the password (hint {}): ", hint);
                 let password = prompt(prompt_message.as_str())?;
 
                 client

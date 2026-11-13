@@ -8,8 +8,8 @@
 
 use std::fmt::Debug;
 
-use mtg_tl_types as tl;
 use jiff::Timestamp;
+use mtg_tl_types as tl;
 
 use super::{Downloadable, PhotoSize};
 

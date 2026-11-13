@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::thread;
 use std::time::SystemTime;
 
-use mtg_tl_types as tl;
 use jiff::Timestamp;
+use mtg_tl_types as tl;
 
 // This atomic isn't for anything critical, just to generate unique IDs without locks.
 // The worst that can happen if the load and store orderings are wrong is that the IDs

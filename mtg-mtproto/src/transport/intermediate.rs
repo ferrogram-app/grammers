@@ -59,21 +59,22 @@ impl Transport for Intermediate {
         }
 
         let len = i32::from_le_bytes(buffer[0..4].try_into().unwrap());
-        if (buffer.len() as i32) < len {
-            return Err(Error::MissingBytes);
-        }
-
-        if len <= 4 {
-            if len >= 4 {
-                let data = i32::from_le_bytes(buffer[4..8].try_into().unwrap());
-                return Err(Error::BadStatus {
-                    status: (-data) as u32,
-                });
-            }
+        if len < 4 {
             return Err(Error::BadLen { got: len });
         }
 
+        // `len` does not count the 4-byte header itself
         let len = len as usize;
+        if buffer.len() < 4 + len {
+            return Err(Error::MissingBytes);
+        }
+
+        if len == 4 {
+            let data = i32::from_le_bytes(buffer[4..8].try_into().unwrap());
+            return Err(Error::BadStatus {
+                status: data.unsigned_abs(),
+            });
+        }
 
         Ok(UnpackedOffset {
             data_range: 4..4 + len,

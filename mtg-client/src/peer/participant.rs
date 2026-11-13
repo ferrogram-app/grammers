@@ -6,9 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use jiff::Timestamp;
 use mtg_session::types::PeerId;
 use mtg_tl_types as tl;
-use jiff::Timestamp;
 
 use super::{Peer, PeerMap, Permissions, Restrictions};
 use crate::{peer::User, utils};

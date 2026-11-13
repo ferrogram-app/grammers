@@ -10,7 +10,6 @@
 
 use std::cell::Cell;
 
-use mtg_tl_types as tl;
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::{
     BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer,
@@ -18,6 +17,7 @@ use html5ever::tokenizer::{
 use html5ever::{Attribute, local_name as tag};
 use jiff::fmt::temporal::DateTimeParser;
 use jiff::{Timestamp, tz};
+use mtg_tl_types as tl;
 
 use super::common::{
     MENTION_URL_PREFIX, Segment, after, before, inject_into_message, telegram_string_len,

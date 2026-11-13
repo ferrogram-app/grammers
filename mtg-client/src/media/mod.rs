@@ -20,12 +20,12 @@ mod photo_sizes;
 
 pub use attributes::Attribute;
 pub use downloadable::Downloadable;
-use mtg_tl_types as tl;
 pub use input_media::{InputAudio, InputMedia, InputVideo, TimeToLive};
 pub use media::{
     ChatPhoto, Contact, Dice, Document, Geo, GeoLive, Media, Photo, Poll, Sticker, Uploaded, Venue,
     WebPage,
 };
+use mtg_tl_types as tl;
 pub use photo_sizes::PhotoSize;
 
 /// Build an `InputMediaUploadedDocument` from an uploaded file.

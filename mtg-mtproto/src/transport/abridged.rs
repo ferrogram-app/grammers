@@ -70,22 +70,23 @@ impl Transport for Abridged {
             return Err(Error::MissingBytes);
         }
 
-        let header_len;
+        let header_len: usize;
         let len = buffer[0];
         let len = if len < 127 {
             header_len = 1;
-            len as i32
+            len as usize
         } else {
             if buffer.len() < 4 {
                 return Err(Error::MissingBytes);
             }
 
             header_len = 4;
-            i32::from_le_bytes(buffer[0..4].try_into().unwrap()) >> 8
+            // 24 bits, unsigned: a signed shift made lengths with the top bit set negative
+            (u32::from_le_bytes(buffer[0..4].try_into().unwrap()) >> 8) as usize
         };
 
         let len = len * 4;
-        if (buffer.len() as i32) < header_len + len {
+        if buffer.len() < header_len + len {
             return Err(Error::MissingBytes);
         }
 
@@ -93,13 +94,10 @@ impl Transport for Abridged {
             let data = i32::from_le_bytes(buffer[1..5].try_into().unwrap());
             if data < 0 {
                 return Err(Error::BadStatus {
-                    status: (-data) as u32,
+                    status: data.unsigned_abs(),
                 });
             }
         }
-
-        let header_len = header_len as usize;
-        let len = len as usize;
 
         Ok(UnpackedOffset {
             data_range: header_len..header_len + len,
