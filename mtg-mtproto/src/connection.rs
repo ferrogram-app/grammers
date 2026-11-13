@@ -39,7 +39,9 @@ const LEADING_BUFFER_SPACE: usize = mtp::MAX_TRANSPORT_HEADER_LEN
 /// Glues together the transport and MTP state, and coordinates them to manage
 /// the I/O buffers to send packed requests and iterate unpacked responses.
 pub struct State<T: Transport, M: Mtp> {
+    /// The transport framing the packets.
     pub transport: T,
+    /// The MTProto state turning requests into packets and back.
     pub mtp: M,
     read_buffer: Vec<u8>,
     read_head: usize,
@@ -50,6 +52,7 @@ pub struct State<T: Transport, M: Mtp> {
 }
 
 impl<T: Transport, M: Mtp> State<T, M> {
+    /// Creates a state with empty buffers.
     pub fn new(transport: T, mtp: M) -> Self {
         Self {
             transport,

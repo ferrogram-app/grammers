@@ -36,6 +36,7 @@ pub struct Full {
 
 #[allow(clippy::new_without_default)]
 impl Full {
+    /// Creates the transport.
     pub fn new() -> Self {
         Self {
             send_seq: 0,

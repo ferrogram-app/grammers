@@ -71,7 +71,12 @@ pub struct DeserializationFailure {
 #[derive(Debug)]
 pub enum Deserialization {
     /// Copy of an `rpc_result` that contained an `Updates` type.
-    OwnUpdate { msg_id: MsgId, update: Vec<u8> },
+    OwnUpdate {
+        /// The request the updates came as the result of.
+        msg_id: MsgId,
+        /// The serialized `Updates` body.
+        update: Vec<u8>,
+    },
     /// `Updates` body received passively when it did not match any `mtproto` constructor.
     Update(Vec<u8>),
     /// `rpc_result` for a previously-sent RPC.
@@ -128,22 +133,46 @@ impl BadMessage {
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeserializeError {
     /// The server's Authorization Key did not match our expectations.
-    BadAuthKey { got: i64, expected: i64 },
+    BadAuthKey {
+        /// The key id the server sent.
+        got: i64,
+        /// The key id we use.
+        expected: i64,
+    },
 
     /// The server's message ID did not match our expectations.
-    BadMessageId { got: i64 },
+    BadMessageId {
+        /// The rejected message id.
+        got: i64,
+    },
 
     /// The message belongs to another session.
-    BadSessionId { got: i64, expected: i64 },
+    BadSessionId {
+        /// The session id the server sent.
+        got: i64,
+        /// Our session id.
+        expected: i64,
+    },
 
     /// The padding after the message is not 12 to 1024 bytes, as MTProto 2.0 requires.
-    BadPadding { got: usize },
+    BadPadding {
+        /// The padding length found.
+        got: usize,
+    },
 
     /// The server's message length was not strictly positive.
-    NegativeMessageLength { got: i32 },
+    NegativeMessageLength {
+        /// The length found.
+        got: i32,
+    },
 
     /// The server's message length was past the buffer.
-    TooLongMessageLength { got: usize, max_length: usize },
+    TooLongMessageLength {
+        /// The length found.
+        got: usize,
+        /// How many bytes were left in the buffer.
+        max_length: usize,
+    },
 
     /// The received buffer is too small to contain a valid response message,
     /// or the response seemed valid at first but trying to deserialize it
@@ -156,7 +185,10 @@ pub enum DeserializeError {
     /// While deserializing the response types one of them had a constructor
     /// that did not match our expectations. The invalid ID is contained
     /// within this variant.
-    UnexpectedConstructor { id: u32 },
+    UnexpectedConstructor {
+        /// The constructor id found.
+        id: u32,
+    },
 
     /// Attempting to decrypt the message failed in some way.
     DecryptionError(crypto::Error),

@@ -45,13 +45,26 @@ pub enum Error {
     MissingBytes,
 
     /// The length is either too short or too long to represent a valid packet.
-    BadLen { got: i32 },
+    BadLen {
+        /// The length found.
+        got: i32,
+    },
 
     /// The sequence number received does not match the expected value.
-    BadSeq { expected: i32, got: i32 },
+    BadSeq {
+        /// The sequence number we expected.
+        expected: i32,
+        /// The sequence number we got.
+        got: i32,
+    },
 
     /// The checksum of the packet does not match its expected value.
-    BadCrc { expected: u32, got: u32 },
+    BadCrc {
+        /// The checksum computed from the packet.
+        expected: u32,
+        /// The checksum the packet carried.
+        got: u32,
+    },
 
     /// A negative length was received, indicating a [transport-level error].
     /// The absolute value of this length behaves like an [HTTP status code]:
@@ -65,7 +78,10 @@ pub enum Error {
     ///
     /// [transport-level error]: https://core.telegram.org/mtproto/mtproto-transports#transport-errors
     /// [HTTP status code]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
-    BadStatus { status: u32 },
+    BadStatus {
+        /// The absolute value of the negative length (an HTTP-like code).
+        status: u32,
+    },
 }
 
 /// Result from calling [`Transport::unpack`].

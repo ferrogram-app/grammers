@@ -15,6 +15,7 @@
 //! [Mobile Transport Protocol]: https://core.telegram.org/mtproto
 
 #![deny(unsafe_code)]
+#![warn(missing_docs)]
 
 pub mod authentication;
 pub mod connection;

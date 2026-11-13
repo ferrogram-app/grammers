@@ -42,6 +42,7 @@ pub struct Abridged {
 
 #[allow(clippy::new_without_default)]
 impl Abridged {
+    /// Creates the transport.
     pub fn new() -> Self {
         Self { init: false }
     }

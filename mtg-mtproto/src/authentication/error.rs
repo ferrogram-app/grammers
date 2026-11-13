@@ -76,8 +76,11 @@ pub enum Error {
 
     /// Some parameter (`g`, `g_a` or `g_b`) was out of range.
     GParameterOutOfRange {
+        /// The value that was out of range.
         value: BigUint,
+        /// The exclusive lower bound.
         low: BigUint,
+        /// The exclusive upper bound.
         high: BigUint,
     },
 
@@ -96,7 +99,7 @@ pub enum Error {
         expected: [u8; 20],
     },
 
-    // The new nonce hash did not match.
+    /// The new nonce hash did not match.
     InvalidNewNonceHash {
         /// The unexpected nonce that we got.
         got: [u8; 16],

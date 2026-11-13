@@ -64,6 +64,7 @@ impl<T: Transport + Tagged> Obfuscated<T> {
         (init, cipher)
     }
 
+    /// Creates the transport.
     pub fn new(mut inner: T) -> Self {
         let (init, cipher) = Self::generate_keys(&mut inner);
 

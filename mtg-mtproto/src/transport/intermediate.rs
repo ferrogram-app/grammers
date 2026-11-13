@@ -35,6 +35,7 @@ pub struct Intermediate {
 impl Intermediate {
     const TAG: [u8; 4] = 0xee_ee_ee_ee_u32.to_le_bytes();
 
+    /// Creates the transport.
     pub fn new() -> Self {
         Self { init: false }
     }
