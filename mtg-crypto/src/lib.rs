@@ -120,6 +120,8 @@ fn determine_padding_v2_length(len: usize) -> usize {
 pub fn get_padding_data_v2(buffer_len: usize) -> ([u8; MAX_PADDING_LEN], usize) {
     let random_padding = {
         let mut rnd = [0; 32];
+        // An OS without randomness cannot be recovered from, and weak padding would weaken
+        // msg_key: abort instead of continuing.
         getrandom::fill(&mut rnd).expect("failed to generate a secure padding");
         rnd
     };

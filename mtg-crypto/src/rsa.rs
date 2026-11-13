@@ -48,6 +48,10 @@ fn increment(data: &mut [u8]) {
 }
 
 /// Encrypt the given data, prefixing it with a hash before, using RSA.
+///
+/// # Panics
+///
+/// If `data` is longer than 144 bytes (a caller bug: the inner data is a fixed-size TL object).
 pub fn encrypt_hashed(data: &[u8], key: &Key, random_bytes: &[u8; 224]) -> Vec<u8> {
     // https://core.telegram.org/mtproto/auth_key#41-rsa-paddata-server-public-key-mentioned-above-is-implemented-as-follows
 
@@ -64,7 +68,7 @@ pub fn encrypt_hashed(data: &[u8], key: &Key, random_bytes: &[u8; 224]) -> Vec<u
     let data_pad_reversed = data_with_padding.iter().copied().rev().collect::<Vec<u8>>();
 
     // a random 32-byte temp_key is generated.
-    let mut temp_key: [u8; 32] = random_bytes[192..192 + 32].try_into().unwrap();
+    let mut temp_key: [u8; 32] = std::array::from_fn(|i| random_bytes[192 + i]);
 
     let key_aes_encrypted = loop {
         // data_with_hash := data_pad_reversed + SHA256(temp_key + data_with_padding); -- after this assignment, data_with_hash is exactly 224 bytes long.
