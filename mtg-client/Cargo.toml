@@ -6,7 +6,6 @@ license = "MIT OR Apache-2.0"
 description = """
 A high level client to interact with Telegram's API.
 """
-homepage = "https://github.com/ferrogram-app/mtg"
 repository = "https://github.com/ferrogram-app/mtg"
 keywords = ["mtproto", "telegram", "tl"]
 categories = ["api-bindings"]

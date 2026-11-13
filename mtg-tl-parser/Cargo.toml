@@ -6,7 +6,6 @@ license = "MIT OR Apache-2.0"
 description = """
 A parser for Type Language definitions.
 """
-homepage = "https://github.com/ferrogram-app/mtg"
 repository = "https://github.com/ferrogram-app/mtg"
 keywords = ["telegram", "tl"]
 categories = ["parser-implementations"]
