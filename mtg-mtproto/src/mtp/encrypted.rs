@@ -28,6 +28,14 @@ use crate::{DequeBuffer, MsgId, manual_tl};
 /// code expects to fetch more salts when going from two to one.
 const NUM_FUTURE_SALTS: i32 = 64;
 
+/// Containers and gzip wrappers may nest this deep (a container holding a gzip_packed message).
+/// Telegram never sends more; a deeper chain is hostile and would only eat the stack.
+const MAX_NESTING: u8 = 2;
+
+/// `msgs_ack`, `msgs_state_req` and `msg_resend_req` carry at most this many ids.
+/// https://core.telegram.org/mtproto/service_messages#acknowledgment-of-receipt
+const MAX_IDS_PER_ACK: usize = 8192;
+
 /// When switching to a different salt, how many seconds must have passed since its `valid_since`.
 ///
 /// Used to prevent small fluctuations in the system clock.
@@ -108,6 +116,9 @@ pub struct Encrypted {
 
     /// How many messages are there in the buffer.
     msg_count: usize,
+
+    /// How many containers / gzip wrappers are being unpacked right now.
+    nesting: u8,
 }
 
 /// Time since the Unix epoch; a clock set before it reads as zero (`bad_msg_notification` then
@@ -164,6 +175,7 @@ impl Builder {
             compression_threshold: self.compression_threshold,
             deserialization: Vec::new(),
             msg_count: 0,
+            nesting: 0,
         }
     }
 }
@@ -753,12 +765,12 @@ impl Encrypted {
             32 => {
                 // Sent `seq_no` was too low. Bump it by some large-ish value.
                 // TODO start with a fresh session rather than guessing
-                self.sequence += 64;
+                self.sequence = self.sequence.saturating_add(64);
             }
             33 => {
                 // Sent `seq_no` was too high (this error doesn't seem to occur).
                 // TODO start with a fresh session rather than guessing
-                self.sequence -= 16;
+                self.sequence = (self.sequence - 16).max(0);
             }
             _ => {
                 // Just notify about it.
@@ -955,11 +967,14 @@ impl Encrypted {
             // Response to internal request, do not propagate.
             self.salt_request_msg_id = None;
         } else {
+            // https://core.telegram.org/mtproto/service_messages: "the client MUST check that
+            // req_msg_id matches the query". Not ours: hand it to the caller, keep our salts.
             self.deserialization
                 .push(Deserialization::RpcResult(RpcResult {
                     msg_id: MsgId(salts.req_msg_id),
                     body: message.body,
                 }));
+            return Ok(());
         }
 
         self.start_salt_time = Some((salts.now, Instant::now()));
@@ -1128,11 +1143,18 @@ impl Encrypted {
     /// [Simple Container]: https://core.telegram.org/mtproto/service_messages#simple-container
     fn handle_container(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
         let container = manual_tl::MessageContainer::from_bytes(&message.body)?;
-        for inner_message in container.messages {
-            self.process_message(inner_message)?;
-        }
-
-        Ok(())
+        self.nested(manual_tl::MessageContainer::CONSTRUCTOR_ID, |this| {
+            for inner_message in container.messages {
+                // "a container may not contain another simple container"
+                if inner_message.constructor_id()? == manual_tl::MessageContainer::CONSTRUCTOR_ID {
+                    return Err(DeserializeError::UnexpectedConstructor {
+                        id: manual_tl::MessageContainer::CONSTRUCTOR_ID,
+                    });
+                }
+                this.process_message(inner_message)?;
+            }
+            Ok(())
+        })
     }
 
     /// **[Message Copies]**
@@ -1155,6 +1177,21 @@ impl Encrypted {
     /// in a simple container with the same result.
     ///
     /// [Message Copies]: https://core.telegram.org/mtproto/service_messages#message-copies
+    /// Runs `f` one level deeper, refusing chains deeper than [`MAX_NESTING`].
+    fn nested(
+        &mut self,
+        id: u32,
+        f: impl FnOnce(&mut Self) -> Result<(), DeserializeError>,
+    ) -> Result<(), DeserializeError> {
+        if self.nesting >= MAX_NESTING {
+            return Err(DeserializeError::UnexpectedConstructor { id });
+        }
+        self.nesting += 1;
+        let result = f(self);
+        self.nesting -= 1;
+        result
+    }
+
     fn handle_msg_copy(&self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
         Err(DeserializeError::UnexpectedConstructor {
             id: manual_tl::MessageCopy::CONSTRUCTOR_ID,
@@ -1179,11 +1216,13 @@ impl Encrypted {
     /// [Packed Object]: https://core.telegram.org/mtproto/service_messages#packed-object
     fn handle_gzip_packed(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
         let container = manual_tl::GzipPacked::from_bytes(&message.body)?;
-        self.process_message(manual_tl::Message {
+        let inner = manual_tl::Message {
             body: container.decompress()?,
             ..message
+        };
+        self.nested(manual_tl::GzipPacked::CONSTRUCTOR_ID, |this| {
+            this.process_message(inner)
         })
-        .map(|_| ())
     }
 
     /// **[HTTP Wait/Long Poll]**
@@ -1308,13 +1347,16 @@ impl Mtp for Encrypted {
         // be sent out as soon as possible.
         if !self.pending_ack.is_empty() {
             // TODO avoid to_bytes here, serialize it in-place
+            let n = self.pending_ack.len().min(MAX_IDS_PER_ACK);
             let body = tl::enums::MsgsAck::Ack(tl::types::MsgsAck {
-                msg_ids: mem::take(&mut self.pending_ack),
+                msg_ids: self.pending_ack[..n].to_vec(),
             })
             .to_bytes();
 
-            // This should take priority during the next packet.
+            // This should take priority during the next packet. If it does not fit, the ids
+            // stay pending instead of being forgotten.
             self.try_serialize_msg(buffer, &body, false)?;
+            self.pending_ack.drain(..n);
             // Don't allow other requests through until ^ can be sent.
         }
 
@@ -1759,5 +1801,100 @@ mod tests {
         packet.extend(msg_key);
         packet.extend(plain);
         assert!(m.deserialize(&mut packet).is_err());
+    }
+
+    fn container_of(messages: &[manual_tl::Message]) -> Vec<u8> {
+        use tl::Serializable;
+        let mut out = MSG_CONTAINER_HEADER.to_vec();
+        out.extend((messages.len() as i32).to_le_bytes());
+        for m in messages {
+            out.extend(m.to_bytes());
+        }
+        out
+    }
+
+    fn inner(msg_id: i64, body: Vec<u8>) -> manual_tl::Message {
+        manual_tl::Message {
+            msg_id,
+            seq_no: 0,
+            body,
+        }
+    }
+
+    #[test]
+    fn a_container_inside_a_container_is_an_error() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let s = session(&m);
+        let nested = container_of(&[inner(fresh(2), pong())]);
+        let outer = container_of(&[inner(fresh(4), nested)]);
+        assert!(
+            m.deserialize(&mut server_packet(s, fresh(0), &outer, None))
+                .is_err()
+        );
+        assert_eq!(m.nesting, 0, "depth is restored after an error");
+    }
+
+    #[test]
+    fn a_flat_container_still_works_and_restores_depth() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let s = session(&m);
+        let c = container_of(&[inner(fresh(2), pong())]);
+        assert!(
+            m.deserialize(&mut server_packet(s, fresh(0), &c, None))
+                .is_ok()
+        );
+        assert_eq!(m.nesting, 0);
+    }
+
+    #[test]
+    fn the_nesting_guard_refuses_a_deep_chain() {
+        let mut m = Encrypted::build().finish(auth_key());
+        m.nesting = MAX_NESTING;
+        let c = container_of(&[]);
+        let msg = inner(fresh(0), c);
+        assert!(m.handle_container(msg).is_err());
+    }
+
+    #[test]
+    fn a_negative_sequence_is_clamped_on_bad_msg_notification_33() {
+        let mut m = Encrypted::build().finish(auth_key());
+        m.sequence = 3;
+        let body = tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
+            bad_msg_id: 0,
+            bad_msg_seqno: 0,
+            error_code: 33,
+        });
+        use tl::Serializable;
+        let s = session(&m);
+        let _ = m.deserialize(&mut server_packet(s, fresh(0), &body.to_bytes(), None));
+        assert!(m.sequence >= 0);
+    }
+
+    #[test]
+    fn acks_are_capped_and_the_rest_stays_pending() {
+        let mut m = Encrypted::build().finish(auth_key());
+        m.pending_ack = (0..MAX_IDS_PER_ACK as i64 + 10).collect();
+        let mut buf = DequeBuffer::with_capacity(0, 0);
+        let _ = m.push(&mut buf, REQUEST);
+        assert!(m.pending_ack.len() <= 10, "left {}", m.pending_ack.len());
+    }
+
+    #[test]
+    fn future_salts_for_someone_elses_request_do_not_replace_ours() {
+        use tl::Serializable;
+        let mut m = Encrypted::build().finish(auth_key());
+        let before = m.salts.clone();
+        let body = tl::enums::FutureSalts::Salts(tl::types::FutureSalts {
+            req_msg_id: 12345,
+            now: 0,
+            salts: tl::RawVec(vec![]),
+        })
+        .to_bytes();
+        m.handle_future_salts(inner(fresh(0), body)).unwrap();
+        assert_eq!(m.salts, before);
+        assert!(matches!(
+            m.deserialization.as_slice(),
+            [Deserialization::RpcResult(r)] if r.msg_id == MsgId(12345)
+        ));
     }
 }

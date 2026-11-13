@@ -86,8 +86,9 @@ impl Deserializable for Message {
         let seq_no = i32::deserialize(buf)?;
 
         let len = i32::deserialize(buf)?;
-        // a hostile length is malformed data, not a reason to panic
-        if len < 0 || len as usize >= Message::MAX_BODY_SIZE {
+        // a hostile length is malformed data, not a reason to panic; TL bodies are 4-aligned
+        // https://core.telegram.org/mtproto/security_guidelines
+        if len < 0 || len % 4 != 0 || len as usize >= Message::MAX_BODY_SIZE {
             return Err(tl::deserialize::Error::UnexpectedEof);
         }
         let len = len as usize;
@@ -264,6 +265,17 @@ impl Deserializable for GzipPacked {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_body_length_that_is_not_a_multiple_of_four_is_rejected() {
+        let mut raw = 1i64.to_le_bytes().to_vec();
+        raw.extend(1i32.to_le_bytes());
+        raw.extend(5i32.to_le_bytes());
+        raw.extend([0u8; 8]);
+        assert!(Message::from_bytes(&raw).is_err());
+        raw[12..16].copy_from_slice(&4i32.to_le_bytes());
+        assert!(Message::from_bytes(&raw).is_ok());
+    }
 
     #[test]
     fn gzip_decompress() {
