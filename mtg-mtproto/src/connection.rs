@@ -223,3 +223,132 @@ impl<T: Transport> State<T, Plain> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::Intermediate;
+
+    /// Writes requests verbatim; `accept` decides whether `push` has room.
+    struct Fake {
+        accept: bool,
+        seen: Vec<Vec<u8>>,
+    }
+
+    impl Mtp for Fake {
+        fn push(&mut self, buffer: &mut DequeBuffer<u8>, request: &[u8]) -> Option<MsgId> {
+            if !self.accept {
+                return None;
+            }
+            buffer.extend_back(request);
+            Some(MsgId(7))
+        }
+
+        fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId> {
+            (!buffer.is_empty()).then_some(MsgId(8))
+        }
+
+        fn deserialize(
+            &mut self,
+            payload: &mut [u8],
+        ) -> Result<Vec<Deserialization>, DeserializeError> {
+            self.seen.push(payload.to_vec());
+            Ok(vec![Deserialization::Update(payload.to_vec())])
+        }
+    }
+
+    fn state(accept: bool) -> State<Intermediate, Fake> {
+        State::new(
+            Intermediate::new(),
+            Fake {
+                accept,
+                seen: vec![],
+            },
+        )
+    }
+
+    const REQ: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+
+    #[test]
+    fn a_request_is_buffered_packed_and_written_out() {
+        let mut s = state(true);
+        assert!(s.can_buffer_requests());
+        assert_eq!(s.buffer_request(&REQ), Some(MsgId(7)));
+        assert_eq!(s.pack_outgoing_buffer(), Some(MsgId(8)));
+        assert!(!s.can_buffer_requests());
+        // nothing more can be buffered or packed until the write completes
+        assert_eq!(s.buffer_request(&REQ), None);
+        assert_eq!(s.pack_outgoing_buffer(), None);
+
+        let (_, out) = s.io_buffers();
+        let total = out.len();
+        assert_eq!(&out[..4], &[0xee; 4]); // intermediate tag
+        assert!(total > REQ.len());
+        assert!(!s.handle_net_write(3), "partial write");
+        assert_eq!(s.io_buffers().1.len(), total - 3);
+        assert!(s.handle_net_write(total - 3));
+        assert!(s.can_buffer_requests());
+        assert!(s.io_buffers().1.is_empty());
+    }
+
+    #[test]
+    fn a_full_buffer_rejects_the_request_and_nothing_is_packed_when_empty() {
+        let mut s = state(false);
+        assert_eq!(s.buffer_request(&REQ), None);
+        assert_eq!(s.pack_outgoing_buffer(), None);
+        assert!(s.can_buffer_requests());
+        assert!(s.io_buffers().1.is_empty());
+    }
+
+    #[test]
+    fn zero_bytes_read_means_the_connection_was_reset() {
+        let mut s = state(true);
+        let e = s.handle_net_read(0).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::ConnectionReset);
+    }
+
+    fn feed(s: &mut State<Intermediate, Fake>, bytes: &[u8]) {
+        let (read, _) = s.io_buffers();
+        read[..bytes.len()].copy_from_slice(bytes);
+        s.handle_net_read(bytes.len()).unwrap();
+    }
+
+    #[test]
+    fn unpack_next_yields_whole_packets_and_keeps_partial_ones() {
+        let mut s = state(true);
+        // intermediate framing: tag only on the first packet we send, so frame by hand
+        let mut wire = vec![8, 0, 0, 0];
+        wire.extend(REQ);
+        wire.extend([8, 0, 0, 0, 9, 9]); // second packet is cut short
+        feed(&mut s, &wire);
+
+        let first = s.unpack_next().unwrap().unwrap();
+        assert!(matches!(&first[..], [Deserialization::Update(b)] if b == &REQ));
+        assert!(s.unpack_next().is_none(), "second packet is incomplete");
+
+        feed(&mut s, &[9; 6]);
+        assert!(s.unpack_next().unwrap().is_ok());
+        assert_eq!(s.mtp.seen.len(), 2);
+        assert!(s.unpack_next().is_none());
+    }
+
+    #[test]
+    fn a_transport_error_is_reported_not_swallowed() {
+        let mut s = state(true);
+        feed(&mut s, &[0xfc, 0xff, 0xff, 0xff, 0, 0, 0, 0]); // length -4: a transport status
+        let r = s.unpack_next().unwrap();
+        assert!(matches!(r, Err(DeserializeError::Transport(_))));
+    }
+
+    #[test]
+    fn plain_state_converts_to_encrypted_keeping_its_buffers() {
+        let s = State::new(Intermediate::new(), Plain::new());
+        let enc = s.into_encrypted(Finished {
+            auth_key: [5; 256],
+            time_offset: 3,
+            first_salt: 9,
+        });
+        assert_eq!(enc.mtp.auth_key(), [5; 256]);
+        assert!(enc.can_buffer_requests());
+    }
+}
