@@ -102,3 +102,64 @@ impl<T: Transport + Tagged> Transport for Obfuscated<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::Intermediate;
+
+    /// Client plus the server-side cipher derived from the head the client sent.
+    fn pair() -> (Obfuscated<Intermediate>, ObfuscatedCipher, [u8; 64]) {
+        let mut client = Obfuscated::new(Intermediate::new());
+        let mut buffer = DequeBuffer::with_capacity(4, 0);
+        buffer.extend_back(&[1, 2, 3, 4]);
+        client.pack(&mut buffer);
+        let head: [u8; 64] = buffer[..64].try_into().unwrap();
+        let rev: [u8; 64] = std::array::from_fn(|i| head[63 - i]);
+        let mut server = ObfuscatedCipher::new(&rev);
+        // the client's stream also covered the 64 head bytes
+        let mut all = buffer[..].to_vec();
+        server.decrypt(&mut all);
+        let body = all[64..].to_vec();
+        // first frame: intermediate length prefix + our 4 bytes (the tag went into the head)
+        assert_eq!(body, [4, 0, 0, 0, 1, 2, 3, 4]);
+        (client, server, head)
+    }
+
+    #[test]
+    fn the_head_is_sent_once_and_never_starts_with_a_forbidden_value() {
+        let (mut client, _, head) = pair();
+        assert!(!FORBIDDEN_FIRST_INTS.iter().any(|f| f == &head[..4]));
+        assert_ne!(head[4..8], [0; 4]);
+        assert_ne!(head[0], 0xef);
+        let mut buffer = DequeBuffer::with_capacity(4, 0);
+        buffer.extend_back(&[5, 6, 7, 8]);
+        client.pack(&mut buffer);
+        assert_eq!(buffer.len(), 8, "no second head");
+    }
+
+    #[test]
+    fn unpack_decrypts_incrementally_and_keeps_the_tail() {
+        let (mut client, mut server, _) = pair();
+        let mut wire = vec![8, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 8, 0];
+        server.encrypt(&mut wire);
+
+        let mut buf = wire.clone();
+        let off = client.unpack(&mut buf).unwrap();
+        assert_eq!(&buf[off.data_range.clone()], &[9; 8]);
+        assert_eq!(off.next_offset, 12);
+        // the caller drops the consumed frame; two decrypted bytes of the next one remain
+        let mut rest = wire[12..].to_vec();
+        assert_eq!(client.decrypt_tail, 2);
+        let err = client.unpack(&mut rest).unwrap_err();
+        assert_eq!(err, Error::MissingBytes);
+    }
+
+    #[test]
+    #[should_panic(expected = "smaller than what was decrypted")]
+    fn unpack_panics_if_the_caller_shrinks_the_buffer() {
+        let (mut client, _, _) = pair();
+        client.decrypt_tail = 10;
+        let _ = client.unpack(&mut [0u8; 4]);
+    }
+}

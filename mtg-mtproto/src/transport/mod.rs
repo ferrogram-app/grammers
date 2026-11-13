@@ -129,3 +129,49 @@ impl Transport for Box<dyn Transport + Send> {
         (**self).unpack(buffer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_error_has_a_readable_message() {
+        let all = [
+            (Error::MissingBytes, "need more bytes"),
+            (Error::BadLen { got: -3 }, "bad len (got -3)"),
+            (
+                Error::BadSeq {
+                    expected: 1,
+                    got: 2,
+                },
+                "bad seq (expected 1, got 2)",
+            ),
+            (
+                Error::BadCrc {
+                    expected: 1,
+                    got: 2,
+                },
+                "bad crc (expected 1, got 2)",
+            ),
+            (
+                Error::BadStatus { status: 404 },
+                "bad status (negative length -404)",
+            ),
+        ];
+        for (e, text) in all {
+            assert_eq!(e.to_string(), format!("transport error: {text}"));
+        }
+    }
+
+    #[test]
+    fn a_boxed_transport_forwards_pack_and_unpack() {
+        let mut boxed: Box<dyn Transport + Send> = Box::new(crate::transport::Full::new());
+        let mut buffer = DequeBuffer::with_capacity(8, 0);
+        buffer.extend_back(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        boxed.pack(&mut buffer);
+        let mut wire = buffer[..].to_vec();
+        let off = boxed.unpack(&mut wire).unwrap();
+        assert_eq!(&wire[off.data_range], &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(boxed.unpack(&mut [0u8; 2]), Err(Error::MissingBytes));
+    }
+}

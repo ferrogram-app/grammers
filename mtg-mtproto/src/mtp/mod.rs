@@ -247,3 +247,86 @@ pub trait Mtp {
     fn deserialize(&mut self, payload: &mut [u8])
     -> Result<Vec<Deserialization>, DeserializeError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bad(code: i32) -> BadMessage {
+        BadMessage {
+            msg_id: MsgId(1),
+            code,
+        }
+    }
+
+    #[test]
+    fn bad_message_codes_are_described_and_classified() {
+        for code in [16, 17, 18, 19, 20, 32, 33, 34, 35, 48, 64, 99] {
+            assert!(!bad(code).description().is_empty());
+        }
+        assert_eq!(
+            bad(99).description(),
+            "unknown explanation; please report this issue"
+        );
+        for (code, retryable, fatal) in [
+            (16, true, false),
+            (17, true, false),
+            (48, true, false),
+            (32, false, false),
+            (33, false, false),
+            (64, false, true),
+        ] {
+            assert_eq!(bad(code).retryable(), retryable, "{code}");
+            assert_eq!(bad(code).fatal(), fatal, "{code}");
+        }
+    }
+
+    #[test]
+    fn every_deserialize_error_displays() {
+        let all = [
+            DeserializeError::BadAuthKey {
+                got: 1,
+                expected: 2,
+            },
+            DeserializeError::BadMessageId { got: 1 },
+            DeserializeError::BadSessionId {
+                got: 1,
+                expected: 2,
+            },
+            DeserializeError::BadPadding { got: 3 },
+            DeserializeError::NegativeMessageLength { got: -1 },
+            DeserializeError::TooLongMessageLength {
+                got: 9,
+                max_length: 4,
+            },
+            DeserializeError::MessageBufferTooSmall,
+            DeserializeError::DecompressionFailed,
+            DeserializeError::UnexpectedConstructor { id: 0xabc },
+            DeserializeError::DecryptionError(crypto::Error::InvalidBuffer),
+            DeserializeError::Transport(transport::Error::MissingBytes),
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for e in all {
+            let text = e.to_string();
+            assert!(!text.is_empty());
+            assert!(seen.insert(text));
+        }
+    }
+
+    #[test]
+    fn conversions_into_deserialize_error() {
+        use tl::deserialize::Error as T;
+        assert_eq!(
+            DeserializeError::from(T::UnexpectedEof),
+            DeserializeError::MessageBufferTooSmall
+        );
+        assert_eq!(
+            DeserializeError::from(T::UnexpectedConstructor { id: 7 }),
+            DeserializeError::UnexpectedConstructor { id: 7 }
+        );
+        assert_eq!(
+            DeserializeError::from(crypto::Error::AuthKeyMismatch),
+            DeserializeError::DecryptionError(crypto::Error::AuthKeyMismatch)
+        );
+    }
+}
