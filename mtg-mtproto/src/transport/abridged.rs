@@ -90,13 +90,13 @@ impl Transport for Abridged {
             return Err(Error::MissingBytes);
         }
 
-        if header_len == 1 && len >= 4 {
-            let data = i32::from_le_bytes(buffer[1..5].try_into().unwrap());
-            if data < 0 {
-                return Err(Error::BadStatus {
-                    status: data.unsigned_abs(),
-                });
-            }
+        // A 4-byte payload is a transport error code, never a message (the shortest is 20 bytes).
+        // Longer payloads start with an auth_key_id, whose first int may well be negative.
+        if len == 4 {
+            let data = i32::from_le_bytes(buffer[header_len..header_len + 4].try_into().unwrap());
+            return Err(Error::BadStatus {
+                status: data.unsigned_abs(),
+            });
         }
 
         Ok(UnpackedOffset {
@@ -219,6 +219,38 @@ mod tests {
         assert_eq!(
             transport.unpack(&mut buffer[..]),
             Err(Error::BadStatus { status: 404 })
+        );
+    }
+
+    #[test]
+    fn a_payload_starting_with_a_negative_int_is_not_a_status() {
+        // 8 bytes: the first 4 are an auth_key_id fragment with the top bit set
+        let mut buffer = vec![2, 0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0];
+        let offset = Abridged::new().unpack(&mut buffer).unwrap();
+        assert_eq!(offset.data_range, 1..9);
+    }
+
+    #[test]
+    fn a_four_byte_payload_is_a_transport_error() {
+        // https://core.telegram.org/mtproto/mtproto-transports#transport-errors
+        let mut buffer = vec![1];
+        buffer.extend((-404i32).to_le_bytes());
+        assert_eq!(
+            Abridged::new().unpack(&mut buffer),
+            Err(Error::BadStatus { status: 404 })
+        );
+    }
+
+    #[test]
+    fn a_long_header_and_missing_bytes() {
+        assert_eq!(Abridged::new().unpack(&mut []), Err(Error::MissingBytes));
+        assert_eq!(
+            Abridged::new().unpack(&mut [0x7f, 1]),
+            Err(Error::MissingBytes)
+        );
+        assert_eq!(
+            Abridged::new().unpack(&mut [3, 0, 0]),
+            Err(Error::MissingBytes)
         );
     }
 }

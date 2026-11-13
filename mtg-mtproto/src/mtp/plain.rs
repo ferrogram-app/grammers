@@ -105,7 +105,7 @@ impl Mtp for Plain {
         if len <= 0 {
             return Err(DeserializeError::NegativeMessageLength { got: len });
         }
-        if (20 + len) as usize > payload.len() {
+        if len as usize > payload.len() - 20 {
             return Err(DeserializeError::TooLongMessageLength {
                 got: len as usize,
                 max_length: payload.len() - 20,
@@ -142,5 +142,17 @@ mod tests {
 
         assert!(mtp.push(&mut buffer, REQUEST).is_some());
         assert!(mtp.push(&mut buffer, REQUEST).is_none());
+    }
+
+    #[test]
+    fn a_hostile_length_is_an_error_not_an_overflow() {
+        let mut payload = vec![0u8; 8];
+        payload.extend(1i64.to_le_bytes()); // msg_id % 4 == 1
+        payload.extend(i32::MAX.to_le_bytes());
+        payload.extend([0u8; 8]);
+        assert!(matches!(
+            Plain::new().deserialize(&mut payload),
+            Err(DeserializeError::TooLongMessageLength { .. })
+        ));
     }
 }

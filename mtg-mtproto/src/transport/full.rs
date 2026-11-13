@@ -114,6 +114,14 @@ impl Transport for Full {
             });
         }
 
+        // A 4-byte payload is a transport error code (e.g. -404), framed like any payload.
+        if len == 16 {
+            let data = i32::from_le_bytes(buffer[8..12].try_into().unwrap());
+            return Err(Error::BadStatus {
+                status: data.unsigned_abs(),
+            });
+        }
+
         self.recv_seq = self.recv_seq.wrapping_add(1);
         Ok(UnpackedOffset {
             data_range: 8..len - 4,
@@ -260,6 +268,20 @@ mod tests {
 
         assert_eq!(
             transport.unpack(&mut buffer[..]),
+            Err(Error::BadStatus { status: 404 })
+        );
+    }
+
+    #[test]
+    fn a_four_byte_payload_is_a_transport_error() {
+        // the error code is framed like any payload: len = 16, seq, code, crc
+        let mut frame = 16i32.to_le_bytes().to_vec();
+        frame.extend(0i32.to_le_bytes());
+        frame.extend((-404i32).to_le_bytes());
+        let crc = crc32fast::hash(&frame);
+        frame.extend(crc.to_le_bytes());
+        assert_eq!(
+            Full::new().unpack(&mut frame),
             Err(Error::BadStatus { status: 404 })
         );
     }
