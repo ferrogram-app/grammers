@@ -322,6 +322,9 @@ impl<T: Transport, M: mtp::Mtp> Sender<T, M> {
                 mtp::Deserialization::RpcResult(result) => self.process_result(result),
                 mtp::Deserialization::RpcError(error) => self.process_error(error),
                 mtp::Deserialization::BadMessage(bad_msg) => self.process_bad_message(bad_msg),
+                mtp::Deserialization::NewSession { first_msg_id } => {
+                    self.process_new_session(updates, first_msg_id)
+                }
                 mtp::Deserialization::Failure(failure) => self.process_deserialize_error(failure),
             }
         }
@@ -432,6 +435,18 @@ impl<T: Transport, M: mtp::Mtp> Sender<T, M> {
                 "got rpc error but no such request is saved",
             );
         }
+    }
+
+    /// The server opened a new session: it never saw requests older than `first_msg_id`, so
+    /// they are sent again, and updates may have been lost, so the upper layer is told.
+    fn process_new_session(&mut self, updates: &mut Vec<UpdatesLike>, first_msg_id: MsgId) {
+        for request in &mut self.requests {
+            if matches!(&request.state, RequestState::Sent(pair) if pair.msg_id < first_msg_id) {
+                info!("new session: re-sending a request the server has not seen");
+                request.state = RequestState::NotSerialized;
+            }
+        }
+        updates.push(UpdatesLike::ConnectionClosed);
     }
 
     fn process_bad_message(&mut self, bad_msg: mtp::BadMessage) {
@@ -620,6 +635,33 @@ mod tests {
             code: 16,
         });
         assert!(matches!(s.requests[0].state, RequestState::Serialized(_)));
+    }
+
+    #[tokio::test]
+    async fn a_new_session_resends_only_requests_it_has_not_seen_and_flags_a_gap() {
+        let (mut s, _l) = sender().await;
+        for (id, sent) in [(4, true), (8, true), (12, true), (2, false)] {
+            let (result, _) = oneshot::channel();
+            let pair = MsgIdPair::new(MsgId::from_raw(id));
+            s.requests.push(Request {
+                body: vec![0; 8],
+                state: if sent {
+                    RequestState::Sent(pair)
+                } else {
+                    RequestState::Serialized(pair)
+                },
+                result,
+            });
+        }
+        let mut updates = vec![];
+        s.process_new_session(&mut updates, MsgId::from_raw(8));
+        let states: Vec<bool> = s
+            .requests
+            .iter()
+            .map(|r| matches!(r.state, RequestState::NotSerialized))
+            .collect();
+        assert_eq!(states, [true, false, false, false]);
+        assert!(matches!(&updates[..], [UpdatesLike::ConnectionClosed]));
     }
 
     #[test]

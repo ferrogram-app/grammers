@@ -80,6 +80,13 @@ pub enum Deserialization {
     RpcError(RpcResultError),
     /// `bad_msg_notification` for a previously-sent message.
     BadMessage(BadMessage),
+    /// The server started a new session (`new_session_created`), once per `unique_id`.
+    /// Requests with a message id below `first_msg_id` were never seen by it and must be
+    /// sent again, and updates may have been missed in the meantime.
+    NewSession {
+        /// Lowest message id the new session has seen.
+        first_msg_id: MsgId,
+    },
     /// Generic deserialization failure of a received message.
     Failure(DeserializationFailure),
 }

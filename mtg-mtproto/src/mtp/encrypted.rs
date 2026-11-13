@@ -10,6 +10,9 @@ use std::mem;
 
 /// How many server message ids are remembered for duplicate detection.
 const SEEN_MSG_IDS: usize = 512;
+
+/// How many `new_session_created` ids are remembered.
+const SEEN_SESSIONS: usize = 16;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use mtg_crypto::{AuthKey, decrypt_data_v2, encrypt_data_v2, get_padding_data_v2};
@@ -103,6 +106,9 @@ pub struct Encrypted {
     /// [Content-related Message]: https://core.telegram.org/mtproto/description#content-related-message
     pending_ack: Vec<i64>,
 
+    /// `unique_id`s of the latest `new_session_created` messages, so a resent one is ignored.
+    seen_sessions: std::collections::VecDeque<i64>,
+
     /// The ids of the latest server messages, to drop a message the server sent twice.
     seen_msg_ids: std::collections::VecDeque<i64>,
 
@@ -171,6 +177,7 @@ impl Builder {
             sequence: 0,
             last_msg_id: 0,
             pending_ack: vec![],
+            seen_sessions: std::collections::VecDeque::new(),
             seen_msg_ids: Default::default(),
             compression_threshold: self.compression_threshold,
             deserialization: Vec::new(),
@@ -1098,6 +1105,16 @@ impl Encrypted {
         let new_session = tl::enums::NewSession::from_bytes(&message.body)?;
         match new_session {
             tl::enums::NewSession::Created(x) => {
+                if self.seen_sessions.contains(&x.unique_id) {
+                    return Ok(());
+                }
+                if self.seen_sessions.len() >= SEEN_SESSIONS {
+                    self.seen_sessions.pop_front();
+                }
+                self.seen_sessions.push_back(x.unique_id);
+                self.deserialization.push(Deserialization::NewSession {
+                    first_msg_id: MsgId(x.first_msg_id),
+                });
                 self.salts.clear();
                 self.salts.push(tl::types::FutureSalt {
                     valid_since: 0,
@@ -1954,6 +1971,35 @@ mod tests {
         // anything else is an update for the upper layers
         let out = feed(&mut m, 99, le(id(0xdeadbeef), &[&junk])).unwrap();
         assert!(matches!(&out[..], [Deserialization::Update(_)]));
+    }
+
+    fn new_session(unique_id: i64, first: i64) -> Vec<u8> {
+        le(
+            id(tl::types::NewSessionCreated::CONSTRUCTOR_ID),
+            &[
+                &first.to_le_bytes(),
+                &unique_id.to_le_bytes(),
+                &5i64.to_le_bytes(),
+            ],
+        )
+    }
+
+    #[test]
+    fn a_new_session_is_reported_once_per_unique_id() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let out = feed(&mut m, 1, new_session(100, 4000)).unwrap();
+        assert!(
+            matches!(&out[..], [Deserialization::NewSession { first_msg_id }] if *first_msg_id == MsgId(4000))
+        );
+        // the same session announced again (a resend): nothing new
+        assert!(feed(&mut m, 2, new_session(100, 4000)).unwrap().is_empty());
+        // another session
+        assert_eq!(feed(&mut m, 3, new_session(101, 5000)).unwrap().len(), 1);
+        // the memory is bounded: after SEEN_SESSIONS others, id 100 counts as new again
+        for n in 0..SEEN_SESSIONS as i64 {
+            feed(&mut m, 10 + n, new_session(200 + n, 1)).unwrap();
+        }
+        assert_eq!(feed(&mut m, 90, new_session(100, 4000)).unwrap().len(), 1);
     }
 
     #[test]
