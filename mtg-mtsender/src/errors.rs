@@ -114,33 +114,35 @@ impl fmt::Display for RpcError {
 
 impl From<tl::types::RpcError> for RpcError {
     fn from(error: tl::types::RpcError) -> Self {
-        // Extract the numeric value in the error, if any
-        if let Some((value, parsed_value)) = error
-            .error_message
-            .split(|c: char| !c.is_ascii_digit())
-            .flat_map(|value| {
-                value
-                    .parse::<u32>()
-                    .map(|parsed_value| (value, parsed_value))
-            })
-            .next()
-        {
-            let mut to_remove = String::with_capacity(1 + value.len());
-            to_remove.push('_');
-            to_remove.push_str(value);
-            Self {
-                code: error.error_code,
-                name: error.error_message.replace(&to_remove, ""),
-                value: Some(parsed_value),
-                caused_by: None,
+        // The value is the `_X` placeholder of the doc (`FLOOD_WAIT_X`, `INTERDC_X_CALL_ERROR`):
+        // a digit run right after an underscore. Digits elsewhere (`2FA_CONFIRM_WAIT_X`) belong
+        // to the name.
+        let message = &error.error_message;
+        let bytes = message.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'_' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
+                let end = (i + 1..bytes.len())
+                    .find(|&k| !bytes[k].is_ascii_digit())
+                    .unwrap_or(bytes.len());
+                if let Ok(value) = message[i + 1..end].parse::<u32>() {
+                    return Self {
+                        code: error.error_code,
+                        name: format!("{}{}", &message[..i], &message[end..]),
+                        value: Some(value),
+                        caused_by: None,
+                    };
+                }
+                i = end;
+            } else {
+                i += 1;
             }
-        } else {
-            Self {
-                code: error.error_code,
-                name: error.error_message.clone(),
-                value: None,
-                caused_by: None,
-            }
+        }
+        Self {
+            code: error.error_code,
+            name: message.clone(),
+            value: None,
+            caused_by: None,
         }
     }
 }
@@ -341,6 +343,40 @@ mod tests {
                 value: None,
                 caused_by: None,
             }
+        );
+    }
+
+    fn parsed(message: &str) -> (String, Option<u32>) {
+        let e = RpcError::from(tl::types::RpcError {
+            error_code: 420,
+            error_message: message.into(),
+        });
+        (e.name, e.value)
+    }
+
+    #[test]
+    fn the_value_is_the_underscore_number_of_the_doc() {
+        assert_eq!(parsed("FLOOD_WAIT_31"), ("FLOOD_WAIT".into(), Some(31)));
+        assert_eq!(parsed("SLOWMODE_WAIT_5"), ("SLOWMODE_WAIT".into(), Some(5)));
+        assert_eq!(
+            parsed("INTERDC_2_CALL_ERROR"),
+            ("INTERDC_CALL_ERROR".into(), Some(2))
+        );
+        assert_eq!(
+            parsed("FILE_PART_0_MISSING"),
+            ("FILE_PART_MISSING".into(), Some(0))
+        );
+        // digits in the name are not a value
+        assert_eq!(
+            parsed("2FA_CONFIRM_WAIT_86400"),
+            ("2FA_CONFIRM_WAIT".into(), Some(86400))
+        );
+        assert_eq!(parsed("2FA_REQUIRED"), ("2FA_REQUIRED".into(), None));
+        assert_eq!(parsed("A_1B"), ("AB".into(), Some(1)));
+        // too big for u32: stays part of the name
+        assert_eq!(
+            parsed("FLOOD_WAIT_99999999999"),
+            ("FLOOD_WAIT_99999999999".into(), None)
         );
     }
 }
