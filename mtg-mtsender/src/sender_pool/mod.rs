@@ -10,7 +10,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::num::NonZeroU32;
 use std::ops::{ControlFlow, Deref};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{fmt, panic};
 
 use mtg_mtproto::{MAX_REQUEST_SIZE, mtp, transport};
@@ -25,15 +25,19 @@ use tokio::{
     task::JoinSet,
     time::sleep,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
+
+mod dc_option;
+mod run;
+
+use dc_option::merge_dc_option;
+use run::run_sender;
 
 use crate::configuration::{ConnectionParams, RetryContext};
 use crate::errors::{InvocationError, ReadError};
 use crate::{Sender, ServerAddr, connect, connect_with_auth};
 
 /// How long to wait after warning the user that the updates was dropped.
-const UPDATES_DROPPED_LOG_COOLDOWN: Duration = Duration::from_secs(300);
-
 type InvokeResponse = Vec<u8>;
 
 enum Request {
@@ -532,87 +536,6 @@ fn is_auth_key_duplicated(error: &InvocationError) -> bool {
     matches!(error, InvocationError::Rpc(err) if err.code == 406 && err.name == "AUTH_KEY_DUPLICATED")
 }
 
-/// Puts the address of `option` into `dc_option`; `false` if the address does not parse.
-fn merge_dc_option(dc_option: &mut DcOption, option: &tl::types::DcOption) -> bool {
-    if option.ipv6 {
-        let Ok(ip) = option.ip_address.parse::<Ipv6Addr>() else {
-            return false;
-        };
-        dc_option.ipv6 = SocketAddrV6::new(ip, option.port as _, 0, 0);
-    } else {
-        let Ok(ip) = option.ip_address.parse::<Ipv4Addr>() else {
-            return false;
-        };
-        dc_option.ipv4 = SocketAddrV4::new(ip, option.port as _);
-        if dc_option.ipv6.ip().to_bits() == 0 {
-            dc_option.ipv6 = SocketAddrV6::new(
-                dc_option.ipv4.ip().to_ipv6_mapped(),
-                dc_option.ipv4.port(),
-                0,
-                0,
-            );
-        }
-    }
-    true
-}
-
-async fn run_sender(
-    mut sender: Sender<Box<dyn transport::Transport + Send>, mtg_mtproto::mtp::Encrypted>,
-    mut rpc_rx: mpsc::UnboundedReceiver<Rpc>,
-    updates: mpsc::Sender<UpdatesLike>,
-    home_sender: bool,
-) -> Result<(), ReadError> {
-    let mut dropped: usize = 0;
-    let mut last_update_limit_warn = Instant::now();
-    let mut updates_closed = false;
-
-    loop {
-        tokio::select! {
-            step = sender.step() => match step {
-                Ok(all_new_updates) => {
-                    if updates_closed {
-                        continue;
-                    }
-                    for new_updates in all_new_updates {
-                        if let Err(e) = updates.try_send(new_updates) {
-                            match e {
-                                mpsc::error::TrySendError::Full(_) => {
-                                    dropped += 1;
-                                    if last_update_limit_warn.elapsed() >= UPDATES_DROPPED_LOG_COOLDOWN {
-                                        warn!(
-                                            capacity = updates.max_capacity(),
-                                            dropped_count = dropped,
-                                            last_time = ?last_update_limit_warn.elapsed(),
-                                            "updates channel full",
-                                        );
-                                        dropped = 0;
-                                        last_update_limit_warn = Instant::now();
-                                    }
-                                }
-                                mpsc::error::TrySendError::Closed(_) => {
-                                    debug!("updates channel closed, stopping update forwarding");
-                                    updates_closed = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                },
-                Err(err) => {
-                    if home_sender {
-                        let _ = updates.try_send(UpdatesLike::ConnectionClosed);
-                    }
-                    break Err(err)
-                },
-            },
-            rpc = rpc_rx.recv() => match rpc {
-                Some(rpc) => sender.enqueue_body(rpc.body, rpc.tx),
-                None => break Ok(()),
-            },
-        }
-    }
-}
-
 impl fmt::Debug for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -654,21 +577,6 @@ impl fmt::Debug for Request {
 mod tests {
     use super::*;
     use crate::RpcError;
-
-    fn tl_option(ipv6: bool, ip: &str, port: i32) -> tl::types::DcOption {
-        tl::types::DcOption {
-            ipv6,
-            media_only: false,
-            tcpo_only: false,
-            cdn: false,
-            r#static: true,
-            this_port_only: false,
-            id: 2,
-            ip_address: ip.to_string(),
-            port,
-            secret: None,
-        }
-    }
 
     fn rpc(code: i32, name: &str) -> InvocationError {
         InvocationError::Rpc(RpcError {
@@ -735,53 +643,5 @@ mod tests {
             ipv6: SocketAddrV6::new(Ipv6Addr::from_bits(0), 0, 0, 0),
             auth_key: None,
         }
-    }
-
-    #[test]
-    fn ipv4_option_also_fills_a_missing_ipv6() {
-        let mut dc = empty();
-        assert!(merge_dc_option(
-            &mut dc,
-            &tl_option(false, "149.154.167.51", 443)
-        ));
-        assert_eq!(dc.ipv4, "149.154.167.51:443".parse().unwrap());
-        assert_eq!(
-            dc.ipv6.ip(),
-            &Ipv4Addr::new(149, 154, 167, 51).to_ipv6_mapped()
-        );
-        assert_eq!(dc.ipv6.port(), 443);
-    }
-
-    #[test]
-    fn ipv6_option_and_a_known_ipv6_is_kept() {
-        let mut dc = empty();
-        assert!(merge_dc_option(
-            &mut dc,
-            &tl_option(true, "2001:67c:4e8:f002::a", 443)
-        ));
-        assert_eq!(
-            dc.ipv6.ip(),
-            &"2001:67c:4e8:f002::a".parse::<Ipv6Addr>().unwrap()
-        );
-        // a later ipv4 option must not overwrite the real ipv6 address
-        assert!(merge_dc_option(&mut dc, &tl_option(false, "1.2.3.4", 80)));
-        assert_eq!(
-            dc.ipv6.ip(),
-            &"2001:67c:4e8:f002::a".parse::<Ipv6Addr>().unwrap()
-        );
-        assert_eq!(dc.ipv4, "1.2.3.4:80".parse().unwrap());
-    }
-
-    #[test]
-    fn unparsable_addresses_are_rejected_and_leave_the_option_alone() {
-        let mut dc = empty();
-        assert!(!merge_dc_option(
-            &mut dc,
-            &tl_option(false, "not an ip", 443)
-        ));
-        assert!(!merge_dc_option(&mut dc, &tl_option(true, "1.2.3.4", 443)));
-        assert!(!merge_dc_option(&mut dc, &tl_option(false, "2001::1", 443)));
-        assert_eq!(dc.ipv4.port(), 0);
-        assert_eq!(dc.ipv6.port(), 0);
     }
 }
