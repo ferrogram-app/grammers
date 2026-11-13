@@ -139,10 +139,10 @@ pub enum Error {
         high: BigUint,
     },
 
-    // The generation of Diffie-Hellman parameters is to be retried.
+    /// The server asked to retry the Diffie-Hellman exchange (`dh_gen_retry`).
     DhGenRetry,
 
-    // The generation of Diffie-Hellman parameters failed.
+    /// The server reported failure of the Diffie-Hellman exchange (`dh_gen_fail`).
     DhGenFail,
 
     /// The plaintext answer hash did not match.
@@ -547,7 +547,8 @@ fn do_step3(
     let client_dh_inner = tl::enums::ClientDhInnerData::Data(tl::types::ClientDhInnerData {
         nonce,
         server_nonce,
-        retry_id: 0, // TODO use an actual retry_id
+        // first attempt: retry_id is 0; on dh_gen_retry the caller restarts the handshake
+        retry_id: 0,
         g_b: g_b.to_bytes_be(),
     })
     .to_bytes();
@@ -683,6 +684,8 @@ pub fn create_key(
             time_offset,
             first_salt,
         })
+    } else if dh_gen.nonce_number == 2 {
+        Err(Error::DhGenRetry)
     } else {
         Err(Error::DhGenFail)
     }
@@ -756,6 +759,89 @@ fn key_for_fingerprint(fingerprint: i64) -> Option<rsa::Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn step3() -> Step3 {
+        Step3 {
+            nonce: [1; 16],
+            server_nonce: [2; 16],
+            new_nonce: [3; 32],
+            gab: BigUint::from(12345u32),
+            time_offset: 7,
+        }
+    }
+
+    fn hash(n: u8) -> [u8; 16] {
+        let mut buffer = [0; 256];
+        buffer[255 - 1..].copy_from_slice(&12345u16.to_be_bytes());
+        AuthKey::from_bytes(buffer).calc_new_nonce_hash(&[3; 32], n)
+    }
+
+    #[test]
+    fn dh_gen_ok_retry_fail_and_forged_answers() {
+        use tl::enums::SetClientDhParamsAnswer as A;
+        let ok = A::DhGenOk(tl::types::DhGenOk {
+            nonce: [1; 16],
+            server_nonce: [2; 16],
+            new_nonce_hash1: hash(1),
+        });
+        let done = create_key(step3(), ok).unwrap();
+        assert_eq!(
+            (done.time_offset, done.first_salt),
+            (7, i64::from_le_bytes([1; 8]))
+        );
+
+        let retry = A::DhGenRetry(tl::types::DhGenRetry {
+            nonce: [1; 16],
+            server_nonce: [2; 16],
+            new_nonce_hash2: hash(2),
+        });
+        assert!(matches!(create_key(step3(), retry), Err(Error::DhGenRetry)));
+
+        let fail = A::DhGenFail(tl::types::DhGenFail {
+            nonce: [1; 16],
+            server_nonce: [2; 16],
+            new_nonce_hash3: hash(3),
+        });
+        assert!(matches!(create_key(step3(), fail), Err(Error::DhGenFail)));
+
+        // a retry/fail with a wrong hash, nonce or server_nonce is rejected as forged
+        let bad_hash = A::DhGenRetry(tl::types::DhGenRetry {
+            nonce: [1; 16],
+            server_nonce: [2; 16],
+            new_nonce_hash2: [0; 16],
+        });
+        assert!(matches!(
+            create_key(step3(), bad_hash),
+            Err(Error::InvalidNewNonceHash { .. })
+        ));
+        let bad_nonce = A::DhGenFail(tl::types::DhGenFail {
+            nonce: [9; 16],
+            server_nonce: [2; 16],
+            new_nonce_hash3: hash(3),
+        });
+        assert!(matches!(
+            create_key(step3(), bad_nonce),
+            Err(Error::InvalidNonce { .. })
+        ));
+        let bad_server = A::DhGenFail(tl::types::DhGenFail {
+            nonce: [1; 16],
+            server_nonce: [9; 16],
+            new_nonce_hash3: hash(3),
+        });
+        assert!(matches!(
+            create_key(step3(), bad_server),
+            Err(Error::InvalidServerNonce { .. })
+        ));
+    }
+
+    #[test]
+    fn the_dh_prime_is_the_documented_safe_prime() {
+        // https://core.telegram.org/mtproto/security_guidelines#g-a-and-g-b-validation
+        let p = BigUint::from_bytes_be(&CURRENT_DH_PRIME);
+        assert_eq!(p.bits(), 2048);
+        assert_eq!(CURRENT_G, 3);
+        assert!(mtg_crypto::check_dh_prime(&p, CURRENT_G).unwrap());
+    }
 
     #[test]
     fn a_pq_that_is_not_a_product_of_two_primes_is_an_error() {
