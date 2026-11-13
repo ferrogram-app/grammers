@@ -423,21 +423,6 @@ fn the_nesting_guard_refuses_a_deep_chain() {
 }
 
 #[test]
-fn a_negative_sequence_is_clamped_on_bad_msg_notification_33() {
-    let mut m = Encrypted::build().finish(auth_key());
-    m.sequence = 3;
-    let body = tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
-        bad_msg_id: 0,
-        bad_msg_seqno: 0,
-        error_code: 33,
-    });
-    use tl::Serializable;
-    let s = session(&m);
-    let _ = m.deserialize(&mut server_packet(s, fresh(0), &body.to_bytes(), None));
-    assert!(m.sequence >= 0);
-}
-
-#[test]
 fn acks_are_capped_and_the_rest_stays_pending() {
     let mut m = Encrypted::build().finish(auth_key());
     m.pending_ack = (0..MAX_IDS_PER_ACK as i64 + 10).collect();
@@ -683,4 +668,134 @@ fn gzip_rpc_results_and_bad_gzip() {
     // a gzip_packed message (not an rpc_result) wrapping a service message
     let out = feed(&mut m, 4, packed(&le(id(0xdeadbeef), &[&[0; 4]]))).unwrap();
     assert!(matches!(&out[..], [Deserialization::Update(_)]));
+}
+
+fn bad_msg(code: i32, bad_msg_id: i64) -> Vec<u8> {
+    use tl::Serializable;
+    tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
+        bad_msg_id,
+        bad_msg_seqno: 0,
+        error_code: code,
+    })
+    .to_bytes()
+}
+
+#[test]
+fn bad_msg_codes_19_32_33_64_start_a_new_session() {
+    for code in [19, 32, 33, 64] {
+        let mut m = Encrypted::build().finish(auth_key());
+        m.sequence = 9;
+        let old = m.session_id;
+        let out = feed(&mut m, 1, bad_msg(code, 4)).unwrap();
+        assert!(matches!(&out[..], [Deserialization::BadMessage(b)] if b.code == code));
+        assert_ne!(m.session_id, old, "{code}");
+        assert_eq!(m.previous_session_id, Some(old));
+        assert_eq!(m.sequence, 0, "{code}");
+    }
+}
+
+#[test]
+fn other_bad_msg_codes_keep_the_session() {
+    for code in [16, 17, 20, 34] {
+        let mut m = Encrypted::build().finish(auth_key());
+        let old = m.session_id;
+        feed(&mut m, 1, bad_msg(code, 4)).unwrap();
+        assert_eq!(m.session_id, old, "{code}");
+    }
+}
+
+#[test]
+fn answers_of_the_previous_session_are_still_accepted() {
+    let mut m = Encrypted::build().finish(auth_key());
+    let old = m.session_id;
+    feed(&mut m, 1, bad_msg(32, 4)).unwrap();
+    assert!(
+        m.deserialize(&mut server_packet(old, fresh(2), &pong(), None))
+            .is_ok()
+    );
+    let third = old ^ 1;
+    assert!(matches!(
+        m.deserialize(&mut server_packet(third, fresh(3), &pong(), None)),
+        Err(DeserializeError::BadSessionId { .. })
+    ));
+}
+
+#[test]
+fn a_bad_server_salt_also_fixes_the_clock_and_the_next_message_id() {
+    let mut m = Encrypted::build().finish(auth_key());
+    m.time_offset = 1000;
+    let bad_id = (i64::from(i32::MAX) << 32) | 4;
+    let bad_salt = le(
+        id(tl::types::BadServerSalt::CONSTRUCTOR_ID),
+        &[
+            &bad_id.to_le_bytes(),
+            &0i32.to_le_bytes(),
+            &48i32.to_le_bytes(),
+            &88i64.to_le_bytes(),
+        ],
+    );
+    m.process_message(inner(fresh(1), bad_salt)).unwrap();
+    assert!(m.time_offset.abs() < 5, "{}", m.time_offset);
+    assert_eq!(m.last_msg_id, bad_id);
+}
+
+fn detailed(answer: i64) -> Vec<u8> {
+    le(
+        id(tl::types::MsgNewDetailedInfo::CONSTRUCTOR_ID),
+        &[
+            &answer.to_le_bytes(),
+            &0i32.to_le_bytes(),
+            &0i32.to_le_bytes(),
+        ],
+    )
+}
+
+#[test]
+fn a_detailed_info_asks_for_the_answer_once_a_minute() {
+    let mut m = Encrypted::build().finish(auth_key());
+    feed(&mut m, 1, detailed(222)).unwrap();
+    assert_eq!(m.pending_resend, vec![222]);
+    assert!(m.pending_ack.contains(&222));
+    // asked again within a minute: not queued twice
+    feed(&mut m, 2, detailed(222)).unwrap();
+    assert_eq!(m.pending_resend, vec![222]);
+    // after a minute it is asked again
+    m.pending_resend.clear();
+    m.resend_asked[0].1 -= std::time::Duration::from_secs(61);
+    feed(&mut m, 3, detailed(222)).unwrap();
+    assert_eq!(m.pending_resend, vec![222]);
+}
+
+#[test]
+fn an_answer_we_already_have_is_not_asked_for() {
+    let mut m = Encrypted::build().finish(auth_key());
+    let have = fresh(7);
+    feed(&mut m, 7, pong()).unwrap();
+    feed(&mut m, 8, detailed(have)).unwrap();
+    assert!(m.pending_resend.is_empty());
+}
+
+#[test]
+fn the_resend_request_is_sent_with_the_next_push() {
+    use tl::Serializable;
+    let mut m = Encrypted::build().finish(auth_key());
+    feed(&mut m, 1, detailed(222)).unwrap();
+    let mut buffer = DequeBuffer::with_capacity(0, 0);
+    // two messages: the ack and the resend request, then the request
+    assert!(m.push(&mut buffer, REQUEST).is_some());
+    let want =
+        tl::enums::MsgResendReq::Req(tl::types::MsgResendReq { msg_ids: vec![222] }).to_bytes();
+    assert!(buffer[..].windows(want.len()).any(|w| w == &want[..]));
+    assert!(m.pending_resend.is_empty());
+}
+
+#[test]
+fn a_full_container_keeps_the_resend_request_pending() {
+    let mut m = Encrypted::build().finish(auth_key());
+    feed(&mut m, 1, detailed(222)).unwrap();
+    m.pending_ack.clear();
+    m.msg_count = manual_tl::MessageContainer::MAXIMUM_LENGTH;
+    let mut buffer = DequeBuffer::with_capacity(0, 0);
+    assert!(m.push(&mut buffer, REQUEST).is_none());
+    assert_eq!(m.pending_resend, vec![222]);
 }

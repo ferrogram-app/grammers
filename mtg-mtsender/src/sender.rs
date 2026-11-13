@@ -637,6 +637,52 @@ mod tests {
         assert!(matches!(s.requests[0].state, RequestState::Serialized(_)));
     }
 
+    fn sent(
+        sender: &mut Sender<Full, mtp::Plain>,
+        id: i64,
+    ) -> oneshot::Receiver<Result<Vec<u8>, InvocationError>> {
+        let (result, rx) = oneshot::channel();
+        sender.requests.push(Request {
+            body: vec![0; 8],
+            state: RequestState::Sent(MsgIdPair::new(MsgId::from_raw(id))),
+            result,
+        });
+        rx
+    }
+
+    #[tokio::test]
+    async fn a_bad_msg_with_a_retryable_code_resends_the_request() {
+        for code in [16, 17, 19, 20, 32, 33, 48, 64] {
+            let (mut s, _l) = sender().await;
+            let _rx = sent(&mut s, 4);
+            s.process_bad_message(mtp::BadMessage {
+                msg_id: MsgId::from_raw(4),
+                code,
+            });
+            assert!(
+                matches!(s.requests[0].state, RequestState::NotSerialized),
+                "{code}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_bad_msg_with_a_fatal_code_fails_the_request() {
+        for code in [18, 34, 99] {
+            let (mut s, _l) = sender().await;
+            let mut rx = sent(&mut s, 4);
+            s.process_bad_message(mtp::BadMessage {
+                msg_id: MsgId::from_raw(4),
+                code,
+            });
+            assert!(s.requests.is_empty(), "{code}");
+            assert!(matches!(
+                rx.try_recv(),
+                Ok(Err(InvocationError::Dropped(_)))
+            ));
+        }
+    }
+
     #[tokio::test]
     async fn a_new_session_resends_only_requests_it_has_not_seen_and_flags_a_gap() {
         let (mut s, _l) = sender().await;

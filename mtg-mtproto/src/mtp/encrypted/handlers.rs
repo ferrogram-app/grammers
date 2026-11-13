@@ -431,6 +431,10 @@ impl Encrypted {
                     salt: x.new_server_salt,
                 });
                 self.salt_request_msg_id = None;
+                // The server's id is the best clock we have, and ours must not go below the
+                // one it just rejected. The single salt left makes `push` ask for more.
+                self.correct_time_offset(message.msg_id);
+                self.last_msg_id = self.last_msg_id.max(x.bad_msg_id);
 
                 info!("got bad salt; salts have been reset down to a single one");
                 return Ok(());
@@ -446,15 +450,10 @@ impl Encrypted {
                 // Sent `msg_id` was too high (our `time_offset` is wrong).
                 self.correct_time_offset(message.msg_id);
             }
-            32 => {
-                // Sent `seq_no` was too low. Bump it by some large-ish value.
-                // TODO start with a fresh session rather than guessing
-                self.sequence = self.sequence.saturating_add(64);
-            }
-            33 => {
-                // Sent `seq_no` was too high (this error doesn't seem to occur).
-                // TODO start with a fresh session rather than guessing
-                self.sequence = (self.sequence - 16).max(0);
+            19 | 32 | 33 | 64 => {
+                // Sequence numbers or containers the server does not accept: the official
+                // client starts a new session instead of guessing a correction.
+                self.recreate_session();
             }
             _ => {
                 // Just notify about it.
@@ -475,6 +474,21 @@ impl Encrypted {
     /// ```
     ///
     /// [Request for Message Status Information]: https://core.telegram.org/mtproto/service_messages_about_messages#request-for-message-status-information
+    /// Queues a `msg_resend_req` for an answer the server announced, unless we have it already
+    /// or asked for it in the last minute.
+    fn ask_for_answer(&mut self, answer_msg_id: i64) {
+        if self.seen_msg_ids.contains(&answer_msg_id) {
+            return;
+        }
+        self.resend_asked
+            .retain(|(_, at)| at.elapsed() < RESEND_ASK_INTERVAL);
+        if self.resend_asked.iter().any(|(id, _)| *id == answer_msg_id) {
+            return;
+        }
+        self.resend_asked.push((answer_msg_id, Instant::now()));
+        self.pending_resend.push(answer_msg_id);
+    }
+
     fn handle_state_req(&self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
         // TODO implement
         Ok(())
@@ -570,17 +584,13 @@ impl Encrypted {
         &mut self,
         message: manual_tl::Message,
     ) -> Result<(), DeserializeError> {
-        // TODO https://github.com/telegramdesktop/tdesktop/blob/8f82880b938e06b7a2a27685ef9301edb12b4648/Telegram/SourceFiles/mtproto/connection.cpp#L1790-L1820
-        // TODO https://github.com/telegramdesktop/tdesktop/blob/8f82880b938e06b7a2a27685ef9301edb12b4648/Telegram/SourceFiles/mtproto/connection.cpp#L1822-L1845
         let msg_detailed = tl::enums::MsgDetailedInfo::from_bytes(&message.body)?;
-        match msg_detailed {
-            tl::enums::MsgDetailedInfo::Info(x) => {
-                self.pending_ack.push(x.answer_msg_id);
-            }
-            tl::enums::MsgDetailedInfo::MsgNewDetailedInfo(x) => {
-                self.pending_ack.push(x.answer_msg_id);
-            }
-        }
+        let answer_msg_id = match msg_detailed {
+            tl::enums::MsgDetailedInfo::Info(x) => x.answer_msg_id,
+            tl::enums::MsgDetailedInfo::MsgNewDetailedInfo(x) => x.answer_msg_id,
+        };
+        self.pending_ack.push(answer_msg_id);
+        self.ask_for_answer(answer_msg_id);
         Ok(())
     }
 

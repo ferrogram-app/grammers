@@ -118,14 +118,17 @@ impl BadMessage {
         }
     }
 
-    /// Whether sending the message that caused this error can be retried.
+    /// Whether sending the message that caused this error again can help.
+    ///
+    /// Codes 19, 32, 33 and 64 make [`Encrypted`] start a new session first, so the resend
+    /// carries fresh sequence numbers.
     pub fn retryable(&self) -> bool {
-        [16, 17, 48].contains(&self.code)
+        [16, 17, 19, 20, 32, 33, 48, 64].contains(&self.code)
     }
 
-    /// Whether the entire connection should be restarted.
+    /// Whether the error means a bug on our side that resending cannot fix.
     pub fn fatal(&self) -> bool {
-        !self.retryable() && ![32, 33].contains(&self.code)
+        !self.retryable()
     }
 }
 
@@ -311,9 +314,15 @@ mod tests {
             (16, true, false),
             (17, true, false),
             (48, true, false),
-            (32, false, false),
-            (33, false, false),
-            (64, false, true),
+            (19, true, false),
+            (20, true, false),
+            (32, true, false),
+            (33, true, false),
+            (64, true, false),
+            (18, false, true),
+            (34, false, true),
+            (35, false, true),
+            (99, false, true),
         ] {
             assert_eq!(bad(code).retryable(), retryable, "{code}");
             assert_eq!(bad(code).fatal(), fatal, "{code}");

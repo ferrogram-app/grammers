@@ -39,6 +39,9 @@ const MAX_NESTING: u8 = 2;
 /// https://core.telegram.org/mtproto/service_messages#acknowledgment-of-receipt
 const MAX_IDS_PER_ACK: usize = 8192;
 
+/// How long to wait before asking again for an answer that did not arrive.
+const RESEND_ASK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// When switching to a different salt, how many seconds must have passed since its `valid_since`.
 ///
 /// Used to prevent small fluctuations in the system clock.
@@ -112,6 +115,16 @@ pub struct Encrypted {
     /// The ids of the latest server messages, to drop a message the server sent twice.
     seen_msg_ids: std::collections::VecDeque<i64>,
 
+    /// The session id before the last `recreate_session`: answers still in flight use it.
+    previous_session_id: Option<i64>,
+
+    /// Answers the server announced (`msg_detailed_info`) but we have not received yet; a
+    /// `msg_resend_req` for them goes out with the next packet.
+    pending_resend: Vec<i64>,
+
+    /// When each answer was last asked for, to ask at most once a minute.
+    resend_asked: Vec<(i64, Instant)>,
+
     /// If present, the threshold in bytes at which a message will be
     /// considered large enough to attempt compressing it. Otherwise,
     /// outgoing messages will never be compressed.
@@ -133,6 +146,15 @@ fn since_epoch() -> std::time::Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
+}
+
+/// A random session id. It is not secret; a clock-based value beats aborting.
+fn new_session_id() -> i64 {
+    let mut buffer = [0u8; 8];
+    if getrandom::fill(&mut buffer).is_err() {
+        buffer = (since_epoch().as_nanos() as u64).to_le_bytes();
+    }
+    i64::from_le_bytes(buffer)
 }
 
 impl Builder {
@@ -166,19 +188,15 @@ impl Builder {
             }],
             start_salt_time: None,
             salt_request_msg_id: None,
-            session_id: {
-                let mut buffer = [0u8; 8];
-                // The session id is not secret; a clock-based value beats aborting.
-                if getrandom::fill(&mut buffer).is_err() {
-                    buffer = (since_epoch().as_nanos() as u64).to_le_bytes();
-                }
-                i64::from_le_bytes(buffer)
-            },
+            session_id: new_session_id(),
             sequence: 0,
             last_msg_id: 0,
             pending_ack: vec![],
             seen_sessions: std::collections::VecDeque::new(),
             seen_msg_ids: Default::default(),
+            previous_session_id: None,
+            pending_resend: Vec::new(),
+            resend_asked: Vec::new(),
             compression_threshold: self.compression_threshold,
             deserialization: Vec::new(),
             msg_count: 0,
@@ -208,6 +226,15 @@ impl Encrypted {
 
         let correct = (msg_id >> 32) as i32;
         self.time_offset = correct - now;
+    }
+
+    /// Starts a new session (new id, sequence from zero), as the official client does when the
+    /// server rejects our sequence numbers. The server answers with `new_session_created`,
+    /// which makes the sender resend what the new session has not seen.
+    fn recreate_session(&mut self) {
+        self.previous_session_id = Some(self.session_id);
+        self.session_id = new_session_id();
+        self.sequence = 0;
     }
 
     /// Whether a server message id is not older than 300 s nor more than 30 s ahead of our clock.
@@ -420,6 +447,16 @@ impl Mtp for Encrypted {
             // Don't allow other requests through until ^ can be sent.
         }
 
+        // Ask for the answers the server announced but we never got.
+        if !self.pending_resend.is_empty() {
+            let body = tl::enums::MsgResendReq::Req(tl::types::MsgResendReq {
+                msg_ids: self.pending_resend.clone(),
+            })
+            .to_bytes();
+            self.try_serialize_msg(buffer, &body, true)?;
+            self.pending_resend.clear();
+        }
+
         // Requests that are too large would cause Telegram to close the
         // connection but are so uncommon it's not worth returning `Err`.
         // Without this, failing to serialize would repeatedly return `None`,
@@ -476,7 +513,7 @@ impl Mtp for Encrypted {
 
         let _salt = i64::deserialize(&mut buffer)?;
         let session_id = i64::deserialize(&mut buffer)?;
-        if session_id != self.session_id {
+        if session_id != self.session_id && Some(session_id) != self.previous_session_id {
             return Err(DeserializeError::BadSessionId {
                 got: session_id,
                 expected: self.session_id,
