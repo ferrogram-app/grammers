@@ -368,6 +368,11 @@ impl Encrypted {
         }
         self.seen_msg_ids.push_back(message.msg_id);
 
+        self.dispatch(message)
+    }
+
+    /// Routes an already validated (and deduplicated) message to its handler.
+    fn dispatch(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
         // Handle all the possible Service Messages:
         // * https://core.telegram.org/mtproto/service_messages
         // * https://core.telegram.org/mtproto/service_messages_about_messages
@@ -1220,8 +1225,10 @@ impl Encrypted {
             body: container.decompress()?,
             ..message
         };
+        // The wrapper was already validated and recorded under this msg_id: dispatch the
+        // payload directly, or the duplicate check would drop it.
         self.nested(manual_tl::GzipPacked::CONSTRUCTOR_ID, |this| {
-            this.process_message(inner)
+            this.dispatch(inner)
         })
     }
 
@@ -1896,5 +1903,196 @@ mod tests {
             m.deserialization.as_slice(),
             [Deserialization::RpcResult(r)] if r.msg_id == MsgId(12345)
         ));
+    }
+
+    fn id(c: u32) -> Vec<u8> {
+        c.to_le_bytes().to_vec()
+    }
+
+    fn le(mut v: Vec<u8>, parts: &[&[u8]]) -> Vec<u8> {
+        for p in parts {
+            v.extend(*p);
+        }
+        v
+    }
+
+    fn rpc_result(req: i64, result: Vec<u8>) -> Vec<u8> {
+        le(
+            id(manual_tl::RpcResult::CONSTRUCTOR_ID),
+            &[&req.to_le_bytes(), &result],
+        )
+    }
+
+    /// Feeds `body` as the n-th server message and returns what `deserialize` queued.
+    fn feed(
+        m: &mut Encrypted,
+        n: i64,
+        body: Vec<u8>,
+    ) -> Result<Vec<Deserialization>, DeserializeError> {
+        m.process_message(inner(fresh(n), body))?;
+        Ok(std::mem::take(&mut m.deserialization))
+    }
+
+    #[test]
+    fn service_messages_without_effects_are_accepted() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let junk = [0u8; 16];
+        for (n, c) in [
+            tl::types::MsgsStateReq::CONSTRUCTOR_ID,
+            tl::types::MsgsStateInfo::CONSTRUCTOR_ID,
+            tl::types::MsgsAllInfo::CONSTRUCTOR_ID,
+            tl::types::MsgResendReq::CONSTRUCTOR_ID,
+            tl::types::DestroySessionOk::CONSTRUCTOR_ID,
+            tl::types::HttpWait::CONSTRUCTOR_ID,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let out = feed(&mut m, n as i64 * 2 + 1, le(id(c), &[&junk])).unwrap();
+            assert!(out.is_empty(), "{c:x}");
+        }
+        // anything else is an update for the upper layers
+        let out = feed(&mut m, 99, le(id(0xdeadbeef), &[&junk])).unwrap();
+        assert!(matches!(&out[..], [Deserialization::Update(_)]));
+    }
+
+    #[test]
+    fn detailed_info_new_session_and_bad_salt() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let info = le(
+            id(tl::types::MsgDetailedInfo::CONSTRUCTOR_ID),
+            &[
+                &1i64.to_le_bytes(),
+                &111i64.to_le_bytes(),
+                &0i32.to_le_bytes(),
+                &0i32.to_le_bytes(),
+            ],
+        );
+        feed(&mut m, 1, info).unwrap();
+        let new_info = le(
+            id(tl::types::MsgNewDetailedInfo::CONSTRUCTOR_ID),
+            &[
+                &222i64.to_le_bytes(),
+                &0i32.to_le_bytes(),
+                &0i32.to_le_bytes(),
+            ],
+        );
+        feed(&mut m, 2, new_info).unwrap();
+        assert!(m.pending_ack.contains(&111) && m.pending_ack.contains(&222));
+
+        let created = le(
+            id(tl::types::NewSessionCreated::CONSTRUCTOR_ID),
+            &[
+                &0i64.to_le_bytes(),
+                &0i64.to_le_bytes(),
+                &77i64.to_le_bytes(),
+            ],
+        );
+        feed(&mut m, 3, created).unwrap();
+        assert_eq!(m.salts.len(), 1);
+        assert_eq!(m.salts[0].salt, 77);
+
+        let bad_salt = le(
+            id(tl::types::BadServerSalt::CONSTRUCTOR_ID),
+            &[
+                &5i64.to_le_bytes(),
+                &0i32.to_le_bytes(),
+                &48i32.to_le_bytes(),
+                &88i64.to_le_bytes(),
+            ],
+        );
+        let out = feed(&mut m, 4, bad_salt).unwrap();
+        assert!(matches!(&out[..], [Deserialization::BadMessage(b)] if b.code == 48));
+        assert_eq!(m.salts[0].salt, 88);
+    }
+
+    #[test]
+    fn rpc_results_of_every_kind() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let err = le(
+            id(tl::types::RpcError::CONSTRUCTOR_ID),
+            &[&420i32.to_le_bytes(), &[3, b'a', b'b', b'c']],
+        );
+        let out = feed(&mut m, 1, rpc_result(10, err)).unwrap();
+        assert!(matches!(&out[..], [Deserialization::RpcError(e)] if e.error.error_code == 420));
+
+        // a truncated rpc_error is a failure for that request, not for the connection
+        let out = feed(
+            &mut m,
+            2,
+            rpc_result(11, id(tl::types::RpcError::CONSTRUCTOR_ID)),
+        )
+        .unwrap();
+        assert!(matches!(&out[..], [Deserialization::Failure(f)] if f.msg_id == MsgId(11)));
+
+        // empty result: no constructor to peek
+        let out = feed(&mut m, 3, rpc_result(12, vec![])).unwrap();
+        assert!(matches!(&out[..], [Deserialization::Failure(_)]));
+
+        // answers about dropped queries produce nothing
+        for (n, c) in [
+            tl::types::RpcAnswerUnknown::CONSTRUCTOR_ID,
+            tl::types::RpcAnswerDroppedRunning::CONSTRUCTOR_ID,
+            tl::types::RpcAnswerDropped::CONSTRUCTOR_ID,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let out = feed(&mut m, 10 + n as i64, rpc_result(13, id(c))).unwrap();
+            assert!(out.is_empty());
+        }
+
+        // a plain result, and one that is an update too
+        let out = feed(&mut m, 20, rpc_result(14, le(id(0x11223344), &[&[0; 4]]))).unwrap();
+        assert!(matches!(&out[..], [Deserialization::RpcResult(r)] if r.msg_id == MsgId(14)));
+        let upd = le(id(UPDATE_IDS[0]), &[&[0; 8]]);
+        let out = feed(&mut m, 21, rpc_result(15, upd)).unwrap();
+        assert!(matches!(
+            &out[..],
+            [
+                Deserialization::OwnUpdate { .. },
+                Deserialization::RpcResult(_)
+            ]
+        ));
+    }
+
+    #[test]
+    fn gzip_rpc_results_and_bad_gzip() {
+        use std::io::Write;
+        let mut m = Encrypted::build().finish(auth_key());
+        let packed = |payload: &[u8]| {
+            let mut z = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            z.write_all(payload).unwrap();
+            let z = z.finish().unwrap();
+            let mut v = id(manual_tl::GzipPacked::CONSTRUCTOR_ID);
+            v.push(z.len() as u8); // TL string: short length prefix
+            v.extend(&z);
+            while v.len() % 4 != 0 {
+                v.push(0);
+            }
+            v
+        };
+        let payload = le(id(0x11223344), &[&[7; 4]]);
+        let out = feed(&mut m, 1, rpc_result(1, packed(&payload))).unwrap();
+        assert!(matches!(&out[..], [Deserialization::RpcResult(r)] if r.body == payload));
+
+        // not gzip at all
+        let mut bad = id(manual_tl::GzipPacked::CONSTRUCTOR_ID);
+        bad.extend([4, 1, 2, 3, 4, 0, 0, 0]);
+        let out = feed(&mut m, 2, rpc_result(2, bad)).unwrap();
+        assert!(matches!(&out[..], [Deserialization::Failure(f)] if f.msg_id == MsgId(2)));
+
+        // truncated gzip_packed header
+        let out = feed(
+            &mut m,
+            3,
+            rpc_result(3, id(manual_tl::GzipPacked::CONSTRUCTOR_ID)),
+        )
+        .unwrap();
+        assert!(matches!(&out[..], [Deserialization::Failure(_)]));
+
+        // a gzip_packed message (not an rpc_result) wrapping a service message
+        let out = feed(&mut m, 4, packed(&le(id(0xdeadbeef), &[&[0; 4]]))).unwrap();
+        assert!(matches!(&out[..], [Deserialization::Update(_)]));
     }
 }
