@@ -44,6 +44,29 @@ const MAX_ENCRYPTED_MESSAGE_SIZE: usize = MAX_TRANSPORT_BUFFER_SIZE - 8 - 16;
 pub(crate) const MAX_ENCRYPTED_DATA_SIZE: usize =
     MAX_ENCRYPTED_MESSAGE_SIZE - 8 - 8 - MAX_PADDING_LEN;
 
+/// Largest inflated `gzip_packed` we accept. A packet is at most ~1 MB compressed and real
+/// answers (long dialog lists) compress 10x at best, so this leaves room while stopping a
+/// decompression bomb. The official Android client has no limit at all (it keeps doubling the
+/// buffer); this one is our own choice.
+pub(crate) const MAX_DECOMPRESSED_SIZE: usize = 16 * 1024 * 1024;
+
+/// A `Vec` sink that fails instead of growing past [`MAX_DECOMPRESSED_SIZE`].
+struct Capped(Vec<u8>);
+
+impl Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.0.len() + buf.len() > MAX_DECOMPRESSED_SIZE {
+            return Err(std::io::Error::other("decompressed data is too large"));
+        }
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 impl Message {
     // msg_id (8 bytes), seq_no (4 bytes), bytes (4 len)
     pub const SIZE_OVERHEAD: usize = 16;
@@ -226,14 +249,15 @@ impl GzipPacked {
         Self { packed_data }
     }
 
+    /// Inflates the payload, refusing to produce more than [`MAX_DECOMPRESSED_SIZE`] bytes.
     pub fn decompress(&self) -> Result<Vec<u8>, mtp::DeserializeError> {
-        let writer = Vec::new();
-        let mut decoder = GzDecoder::new(writer);
+        let mut decoder = GzDecoder::new(Capped(Vec::new()));
         decoder
             .write_all(&self.packed_data[..])
             .map_err(|_| mtp::DeserializeError::DecompressionFailed)?;
         decoder
             .finish()
+            .map(|capped| capped.0)
             .map_err(|_| mtp::DeserializeError::DecompressionFailed)
     }
 }
@@ -265,6 +289,28 @@ impl Deserializable for GzipPacked {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn packed(data: &[u8]) -> GzipPacked {
+        let mut z = GzEncoder::new(Vec::new(), Compression::fast());
+        z.write_all(data).unwrap();
+        GzipPacked {
+            packed_data: z.finish().unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_decompression_bomb_is_refused_but_the_limit_itself_is_allowed() {
+        let at_limit = vec![0u8; MAX_DECOMPRESSED_SIZE];
+        assert_eq!(
+            packed(&at_limit).decompress().unwrap().len(),
+            MAX_DECOMPRESSED_SIZE
+        );
+        let over = vec![0u8; MAX_DECOMPRESSED_SIZE + 1];
+        assert!(matches!(
+            packed(&over).decompress(),
+            Err(mtp::DeserializeError::DecompressionFailed)
+        ));
+    }
 
     #[test]
     fn a_body_length_that_is_not_a_multiple_of_four_is_rejected() {
