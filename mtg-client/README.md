@@ -1,28 +1,26 @@
 # mtg-client
 
-This library is a higher-level interface to interact with Telegram's API.
+A high-level Telegram client: connect, sign in, make RPC calls, receive updates, send and
+download messages and files. Built on the other `mtg-*` crates.
 
-It contains the code necessary to create a client, connect to the API and
-make Remote Procedure Calls (RPC) to it, such as signing in or sending a
-message.
+Telegram documentation this crate implements:
 
-The library is in development, but new releases are only cut rarely.
-[Specifying the dependency from the git repository][dep-git] is recommended:
+- [Telegram API](https://core.telegram.org/api): methods and objects
+- [Authorization](https://core.telegram.org/api/auth) and [two-factor (SRP) passwords](https://core.telegram.org/api/srp)
+- [Working with updates](https://core.telegram.org/api/updates)
+- [Files](https://core.telegram.org/api/files)
+- [Message entities](https://core.telegram.org/api/entities)
+- [Error handling](https://core.telegram.org/api/errors)
+- [Obtaining `api_id`](https://core.telegram.org/api/obtaining_api_id)
+
+Depend on it from git and keep every `mtg-*` crate on the same revision:
 
 ```toml
-mtg-client = { git = "https://codeberg.org/Lonami/grammers.git" }
+mtg-client = { git = "https://github.com/ferrogram-app/mtg.git", rev = "<commit>" }
 ```
 
-Please note that traits across versions are not always compatible.
-If you depend on other `mtg-` crates, be sure all of them use
-a compatible version (e.g. all of them using `git`).
-
-Note that `mtg-tl-types` (needed to `client.invoke` "raw" functions)
-is currently re-exported from within this crates, so it's easier to use the
-re-export than to depend on the crate separatedly:
+`mtg-tl-types` (needed for raw `client.invoke` calls) is re-exported:
 
 ```rust
 use mtg_client::mtg_tl_types as tl;
 ```
-
-[dep-git]: https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories

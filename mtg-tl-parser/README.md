@@ -1,8 +1,11 @@
 # mtg-tl-parser
 
-This library provides a public interface to parse [Type Language] definitions.
+Parser for [Type Language] definitions (`api.tl`, `mtproto.tl`): whole files (comments ignored,
+definitions split on `;`) or single definitions.
 
-It exports a method to parse entire files (ignoring comments and splitting
-the definitions on `;`) and offers ways to parse single definitions.
+Telegram documentation this crate implements:
+
+- [Type Language]
+- [Type Language, formal description](https://core.telegram.org/mtproto/TL-formal)
 
 [Type Language]: https://core.telegram.org/mtproto/TL
