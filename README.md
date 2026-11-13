@@ -27,6 +27,7 @@ flowchart TD
 | [mtg-crypto](mtg-crypto/) | AES-IGE, RSA, SHA, 2FA (SRP) |
 | [mtg-tl-types](mtg-tl-types/) | Rust types generated from the TL schema (layer in `api.tl`) |
 | [mtg-tl-gen](mtg-tl-gen/), [mtg-tl-parser](mtg-tl-parser/) | TL code generator and parser |
+| [mtg-secret](mtg-secret/), [mtg-calls](mtg-calls/) | Planned: secret chats; call signalling and key exchange |
 
 ## Security
 
