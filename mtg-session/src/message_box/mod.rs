@@ -154,6 +154,7 @@ impl MessageBoxes {
         }
     }
 
+    #[inline]
     fn entry(&self, key: Key) -> Option<&LiveEntry> {
         self.entries
             .binary_search_by_key(&key, |entry| entry.key)
@@ -161,6 +162,7 @@ impl MessageBoxes {
             .ok()
     }
 
+    #[inline]
     fn update_entry(&mut self, key: Key, updater: impl FnOnce(&mut LiveEntry)) -> bool {
         match self.entries.binary_search_by_key(&key, |entry| entry.key) {
             Ok(i) => {
@@ -171,6 +173,7 @@ impl MessageBoxes {
         }
     }
 
+    #[inline]
     fn force_update_entry(&mut self, mut entry: LiveEntry, updater: impl FnOnce(&mut LiveEntry)) {
         match self
             .entries
@@ -184,6 +187,7 @@ impl MessageBoxes {
         }
     }
 
+    #[inline]
     fn set_entry(&mut self, entry: LiveEntry) {
         match self
             .entries
@@ -205,6 +209,7 @@ impl MessageBoxes {
         }
     }
 
+    #[inline]
     fn pop_entry(&mut self, key: Key) -> Option<LiveEntry> {
         match self.entries.binary_search_by_key(&key, |entry| entry.key) {
             Ok(i) => Some(self.entries.remove(i)),
