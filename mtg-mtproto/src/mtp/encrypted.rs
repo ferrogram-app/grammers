@@ -2067,7 +2067,7 @@ mod tests {
             let mut v = id(manual_tl::GzipPacked::CONSTRUCTOR_ID);
             v.push(z.len() as u8); // TL string: short length prefix
             v.extend(&z);
-            while v.len() % 4 != 0 {
+            while !v.len().is_multiple_of(4) {
                 v.push(0);
             }
             v
