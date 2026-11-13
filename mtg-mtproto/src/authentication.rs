@@ -123,6 +123,12 @@ pub enum Error {
     /// The server's `dh_prime` is invalid.
     InvalidDhPrime,
 
+    /// The operating system could not provide random bytes.
+    RandomUnavailable,
+
+    /// The system clock is set before the Unix epoch.
+    ClockBeforeEpoch,
+
     /// Some parameter (`g`, `g_a` or `g_b`) was out of range.
     GParameterOutOfRange {
         value: BigUint,
@@ -181,6 +187,8 @@ impl fmt::Display for Error {
             }
             Self::InvalidG(g) => write!(f, "the parameter g was invalid: {g}"),
             Self::InvalidDhPrime => write!(f, "the parameter dh_prime was invalid"),
+            Self::RandomUnavailable => write!(f, "secure random bytes are unavailable"),
+            Self::ClockBeforeEpoch => write!(f, "the system clock is before the Unix epoch"),
             Self::GParameterOutOfRange { low, high, value } => write!(
                 f,
                 "the parameter g = {value} was not in the range {low}..{high}"
@@ -223,7 +231,7 @@ pub struct Step3 {
 pub fn step1() -> Result<(tl::functions::ReqPqMulti, Step1), Error> {
     let random_bytes = {
         let mut buffer = [0; 16];
-        getrandom::fill(&mut buffer).expect("failed to generate secure data for auth key");
+        getrandom::fill(&mut buffer).map_err(|_| Error::RandomUnavailable)?;
         buffer
     };
 
@@ -256,7 +264,7 @@ pub fn step2(
 
     let random_bytes = {
         let mut buffer = [0; 32 + 224];
-        getrandom::fill(&mut buffer).expect("failed to generate secure data for auth key");
+        getrandom::fill(&mut buffer).map_err(|_| Error::RandomUnavailable)?;
         buffer
     };
 
@@ -352,8 +360,9 @@ fn do_step2(
         }
     };
 
-    // Safe to unwrap because we found it just above
-    let key = key_for_fingerprint(fingerprint).unwrap();
+    let key = key_for_fingerprint(fingerprint).ok_or_else(|| Error::UnknownFingerprints {
+        fingerprints: res_pq.server_public_key_fingerprints.clone(),
+    })?;
     let ciphertext = rsa::encrypt_hashed(&pq_inner_data, &key, &random_bytes);
 
     Ok((
@@ -384,7 +393,7 @@ pub fn step3(
 
     let random_bytes = {
         let mut buffer = [0; 256 + 16];
-        getrandom::fill(&mut buffer).expect("failed to generate secure data for auth key");
+        getrandom::fill(&mut buffer).map_err(|_| Error::RandomUnavailable)?;
         buffer
     };
 
@@ -394,7 +403,7 @@ pub fn step3(
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("system time is before epoch")
+        .map_err(|_| Error::ClockBeforeEpoch)?
         .as_secs() as i32;
 
     let res = do_step3(data, response, &random_bytes, now);
@@ -445,7 +454,10 @@ fn do_step3(
     check_nonce(&server_dh_params.nonce, &nonce)?;
     check_server_nonce(&server_dh_params.server_nonce, &server_nonce)?;
 
-    if server_dh_params.encrypted_answer.len() % 16 != 0 {
+    // 20 bytes of hash plus at least one block of data.
+    if server_dh_params.encrypted_answer.len() % 16 != 0
+        || server_dh_params.encrypted_answer.len() < 32
+    {
         return Err(Error::EncryptedResponseNotPadded {
             len: server_dh_params.encrypted_answer.len(),
         });
@@ -494,7 +506,8 @@ fn do_step3(
             return Err(Error::InvalidG(server_dh_inner.g));
         }
 
-        if !check_dh_prime(&dh_prime, server_dh_inner.g).unwrap() {
+        // An RNG failure inside the primality test counts as a rejected prime.
+        if !check_dh_prime(&dh_prime, server_dh_inner.g).unwrap_or(false) {
             return Err(Error::InvalidDhPrime);
         }
     }
@@ -739,6 +752,24 @@ fn key_for_fingerprint(fingerprint: i64) -> Option<rsa::Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_too_short_encrypted_answer_is_an_error_not_a_panic() {
+        for len in [0usize, 16] {
+            let data = Step2 {
+                nonce: [1; 16],
+                server_nonce: [2; 16],
+                new_nonce: [3; 32],
+            };
+            let response = tl::enums::ServerDhParams::Ok(tl::types::ServerDhParamsOk {
+                nonce: [1; 16],
+                server_nonce: [2; 16],
+                encrypted_answer: vec![0; len],
+            });
+            let r = do_step3(data, response, &[0; 256 + 16], 0);
+            assert!(matches!(r, Err(Error::EncryptedResponseNotPadded { len: l }) if l == len));
+        }
+    }
 
     #[test]
     fn emulate_successful_auth_key_gen_flow() -> Result<(), Error> {

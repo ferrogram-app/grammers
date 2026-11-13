@@ -110,6 +110,14 @@ pub struct Encrypted {
     msg_count: usize,
 }
 
+/// Time since the Unix epoch; a clock set before it reads as zero (`bad_msg_notification` then
+/// corrects the offset) instead of panicking.
+fn since_epoch() -> std::time::Duration {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+}
+
 impl Builder {
     /// Configures the time offset to Telegram servers.
     pub fn time_offset(mut self, offset: i32) -> Self {
@@ -143,7 +151,10 @@ impl Builder {
             salt_request_msg_id: None,
             session_id: {
                 let mut buffer = [0u8; 8];
-                getrandom::fill(&mut buffer).expect("failed to generate a secure session_id");
+                // The session id is not secret; a clock-based value beats aborting.
+                if getrandom::fill(&mut buffer).is_err() {
+                    buffer = (since_epoch().as_nanos() as u64).to_le_bytes();
+                }
                 i64::from_le_bytes(buffer)
             },
             sequence: 0,
@@ -174,10 +185,7 @@ impl Encrypted {
 
     /// Correct our time offset based on a known valid message ID.
     fn correct_time_offset(&mut self, msg_id: i64) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time is before epoch")
-            .as_secs() as i32;
+        let now = since_epoch().as_secs() as i32;
 
         let correct = (msg_id >> 32) as i32;
         self.time_offset = correct - now;
@@ -185,11 +193,7 @@ impl Encrypted {
 
     /// Whether a server message id is not older than 300 s nor more than 30 s ahead of our clock.
     fn msg_id_in_window(&self, msg_id: i64) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time is before epoch")
-            .as_secs() as i64
-            + self.time_offset as i64;
+        let now = since_epoch().as_secs() as i64 + self.time_offset as i64;
         let age = now - (msg_id >> 32);
         (-30..=300).contains(&age)
     }
@@ -197,9 +201,7 @@ impl Encrypted {
     /// Generates a new unique message ID based on the current
     /// time (in ms) since epoch, applying a known time offset.
     fn get_new_msg_id(&mut self) -> i64 {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time is before epoch");
+        let now = since_epoch();
 
         let seconds = (now.as_secs() as i32 + self.time_offset) as u64;
         let nanoseconds = now.subsec_nanos() as u64;
@@ -968,8 +970,11 @@ impl Encrypted {
         Ok(())
     }
 
+    /// A lone `future_salt` is only valid inside `future_salts`; no request of ours triggers it.
     fn handle_future_salt(&mut self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
-        panic!("no request should trigger a `future_salt` result")
+        Err(DeserializeError::UnexpectedConstructor {
+            id: tl::types::FutureSalt::CONSTRUCTOR_ID,
+        })
     }
 
     /// **[Ping Messages (PING/PONG)]**
@@ -1151,7 +1156,9 @@ impl Encrypted {
     ///
     /// [Message Copies]: https://core.telegram.org/mtproto/service_messages#message-copies
     fn handle_msg_copy(&self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
-        panic!("msg_copy should not be used")
+        Err(DeserializeError::UnexpectedConstructor {
+            id: manual_tl::MessageCopy::CONSTRUCTOR_ID,
+        })
     }
 
     /// **[Packed Object]**
@@ -1651,6 +1658,22 @@ mod tests {
         .to_bytes();
         let r = m.deserialize(&mut server_packet(s, at(-3600, 0), &body, None));
         assert!(r.is_ok());
+    }
+
+    #[test]
+    fn lone_future_salt_and_msg_copy_are_errors_not_panics() {
+        for id in [
+            tl::types::FutureSalt::CONSTRUCTOR_ID,
+            manual_tl::MessageCopy::CONSTRUCTOR_ID,
+        ] {
+            let mut m = Encrypted::build().finish(auth_key());
+            let s = session(&m);
+            let r = m.deserialize(&mut server_packet(s, fresh(0), &id.to_le_bytes(), None));
+            assert!(matches!(
+                r,
+                Err(DeserializeError::UnexpectedConstructor { id: got }) if got == id
+            ));
+        }
     }
 
     #[test]

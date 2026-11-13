@@ -817,9 +817,7 @@ impl MessageBoxes {
 
         trace!(channel_id, ?difference, "applying channel difference");
 
-        self.update_entry(key, |entry| entry.possible_gap = None);
-
-        let tl::types::updates::ChannelDifference {
+        let Ok(tl::types::updates::ChannelDifference {
             r#final,
             pts,
             timeout,
@@ -827,7 +825,14 @@ impl MessageBoxes {
             other_updates: updates,
             chats,
             users,
-        } = adaptor::adapt_channel_difference(difference);
+        }) = adaptor::adapt_channel_difference(difference)
+        else {
+            // Malformed answer: behave as if the request had failed, keep the old state.
+            self.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+            return (Vec::new(), Vec::new(), Vec::new());
+        };
+
+        self.update_entry(key, |entry| entry.possible_gap = None);
 
         if r#final {
             debug!(

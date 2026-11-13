@@ -101,8 +101,8 @@ pub fn check_p_and_g(p: &[u8], g: &i32) -> bool {
 fn check_p_prime_and_subgroup(p: &[u8], g: &i32) -> bool {
     let p = &BigUint::from_bytes_be(p);
 
-    // `safe_prime::check` returns an error when operating-system randomness is unavailable.
-    if !safe_prime::check(p).unwrap() {
+    // `safe_prime::check` fails when operating-system randomness is unavailable: reject then.
+    if !safe_prime::check(p).unwrap_or(false) {
         return false;
     }
 
@@ -124,7 +124,7 @@ fn check_p_prime_and_subgroup(p: &[u8], g: &i32) -> bool {
                 || mod_value == BigUint::from(5u8)
                 || mod_value == BigUint::from(6u8)
         }
-        _ => panic!("Unexpected g parameter"),
+        _ => false,
     }
 }
 
@@ -171,6 +171,13 @@ fn pad_to_256(data: &[u8]) -> [u8; 256] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unexpected_g_is_rejected_not_a_panic() {
+        // 23 is a safe prime (p = 2q + 1, q = 11)
+        assert!(!check_p_prime_and_subgroup(&[23], &1));
+        assert!(!check_p_prime_and_subgroup(&[23], &8));
+    }
 
     #[test]
     fn check_calculations_1() {

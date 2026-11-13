@@ -332,6 +332,69 @@ fn test_next_raw_update_flow_channel_timeout() {
 }
 
 #[test]
+fn a_too_long_channel_difference_without_pts_ends_the_difference() {
+    reset_time();
+    let mut message_boxes = MessageBoxes::new();
+    message_boxes.try_set_channel_state(12, 34);
+    advance_time_by(NO_UPDATES_TIMEOUT);
+    message_boxes.check_deadlines();
+    assert!(message_boxes.get_channel_difference().is_some());
+
+    let dialog = tl::types::Dialog {
+        pinned: false,
+        unread_mark: false,
+        view_forum_as_messages: false,
+        peer: tl::types::PeerChannel { channel_id: 12 }.into(),
+        top_message: 0,
+        read_inbox_max_id: 0,
+        read_outbox_max_id: 0,
+        unread_count: 0,
+        unread_mentions_count: 0,
+        unread_reactions_count: 0,
+        unread_poll_votes_count: 0,
+        notify_settings: tl::types::PeerNotifySettings {
+            show_previews: None,
+            silent: None,
+            mute_until: None,
+            ios_sound: None,
+            android_sound: None,
+            other_sound: None,
+            stories_muted: None,
+            stories_hide_sender: None,
+            stories_ios_sound: None,
+            stories_android_sound: None,
+            stories_other_sound: None,
+        }
+        .into(),
+        pts: None,
+        draft: None,
+        folder_id: None,
+        ttl_period: None,
+    };
+    let (updates, users, chats) = message_boxes.apply_channel_difference(
+        tl::types::updates::ChannelDifferenceTooLong {
+            r#final: true,
+            timeout: None,
+            dialog: dialog.into(),
+            messages: Vec::new(),
+            chats: Vec::new(),
+            users: Vec::new(),
+        }
+        .into(),
+    );
+    assert!(updates.is_empty() && users.is_empty() && chats.is_empty());
+    // the channel keeps its old pts and is no longer being fetched
+    assert!(message_boxes.get_channel_difference().is_none());
+    assert_eq!(
+        message_boxes.session_state(),
+        UpdatesState {
+            channels: vec![ChannelState { id: 12, pts: 34 }.into()],
+            ..message_boxes.session_state()
+        }
+    );
+}
+
+#[test]
 fn test_next_raw_update_flow_channel_issues() {
     reset_time();
     let mut message_boxes = MessageBoxes::new();

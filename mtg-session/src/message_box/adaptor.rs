@@ -383,10 +383,11 @@ pub(super) fn adapt(updates: UpdatesLike) -> Result<tl::types::UpdatesCombined, 
     }
 }
 
+/// `Err(Gap)` when `channelDifferenceTooLong` carries no usable `pts` (folder, community or none).
 pub(super) fn adapt_channel_difference(
     difference: tl::enums::updates::ChannelDifference,
-) -> tl::types::updates::ChannelDifference {
-    match difference {
+) -> Result<tl::types::updates::ChannelDifference, Gap> {
+    Ok(match difference {
         tl::enums::updates::ChannelDifference::Empty(difference) => {
             tl::types::updates::ChannelDifference {
                 r#final: difference.r#final,
@@ -402,15 +403,8 @@ pub(super) fn adapt_channel_difference(
             tl::types::updates::ChannelDifference {
                 r#final: difference.r#final,
                 pts: match difference.dialog {
-                    tl::enums::Dialog::Dialog(d) => d
-                        .pts
-                        .expect("channelDifferenceTooLong dialog did not actually contain a pts"),
-                    tl::enums::Dialog::Folder(_) => {
-                        panic!("received a folder on channelDifferenceTooLong")
-                    }
-                    tl::enums::Dialog::Community(_) => {
-                        panic!("received a community on channelDifferenceTooLong")
-                    }
+                    tl::enums::Dialog::Dialog(tl::types::Dialog { pts: Some(pts), .. }) => pts,
+                    _ => return Err(Gap),
                 },
                 timeout: difference.timeout,
                 new_messages: Vec::new(),
@@ -420,7 +414,7 @@ pub(super) fn adapt_channel_difference(
             }
         }
         tl::enums::updates::ChannelDifference::Difference(difference) => difference,
-    }
+    })
 }
 
 fn peer_from_input_peer(input_peer: &tl::enums::InputPeer) -> tl::enums::Peer {
