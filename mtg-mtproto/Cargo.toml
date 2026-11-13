@@ -12,7 +12,7 @@ categories = ["network-programming"]
 edition = "2024"
 
 [dependencies]
-crc32fast = "1.5.4"
+crc32fast = "1.5.5"
 flate2 = "1.1.11"
 getrandom = "0.4.3"
 mtg-crypto = { path = "../mtg-crypto", version = "0.12.0" }

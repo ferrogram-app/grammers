@@ -30,7 +30,7 @@ mtg-tl-types = { path = "../mtg-tl-types", version = "0.12.0", features = [
     "tl-mtproto",
 ] }
 html5ever = { version = "0.40.1", optional = true }
-jiff = "0.2.40"
+jiff = "0.2.43"
 md5 = "0.8.1"
 mime_guess = "2.0.5"
 pin-project-lite = "0.2"
