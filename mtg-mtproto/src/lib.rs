@@ -43,6 +43,12 @@ pub const MAX_REQUEST_SIZE: usize = manual_tl::Message::MAX_BODY_SIZE;
 pub struct MsgId(i64);
 
 impl MsgId {
+    /// Wraps a raw message identifier; meant for tests of code that tracks requests by id.
+    #[doc(hidden)]
+    pub fn from_raw(raw: i64) -> Self {
+        Self(raw)
+    }
+
     /// Returns the raw value of the message identifier.
     pub fn into_inner(self) -> i64 {
         self.0

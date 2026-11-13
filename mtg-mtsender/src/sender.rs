@@ -45,7 +45,7 @@ pub(crate) fn generate_random_id() -> i64 {
     while LAST_ID.load(Ordering::SeqCst) == 0 {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system time is before epoch")
+            .unwrap_or_default()
             .as_nanos() as i64;
 
         if LAST_ID
@@ -440,11 +440,13 @@ impl<T: Transport, M: mtp::Mtp> Sender<T, M> {
                 RequestState::Serialized(pair)
                     if pair.msg_id == bad_msg.msg_id || pair.container_msg_id == bad_msg.msg_id =>
                 {
-                    panic!(
-                        "bad msg for unsent request {:?}: {}",
-                        bad_msg.msg_id,
+                    // The server cannot know ids we have not sent; ignore it instead of aborting.
+                    warn!(
+                        msg_id = ?bad_msg.msg_id,
+                        "bad msg for unsent request: {}",
                         bad_msg.description()
                     );
+                    return;
                 }
                 RequestState::Sent(pair)
                     if pair.msg_id == bad_msg.msg_id || pair.container_msg_id == bad_msg.msg_id =>
@@ -508,7 +510,8 @@ impl<T: Transport, M: mtp::Mtp> Sender<T, M> {
         for i in 0..self.requests.len() {
             match &self.requests[i].state {
                 RequestState::Serialized(pair) if pair.msg_id == msg_id => {
-                    panic!("got response {msg_id:?} for unsent request {pair:?}");
+                    warn!(?msg_id, ?pair, "got response for unsent request; ignoring");
+                    return None;
                 }
                 RequestState::Sent(pair) if pair.msg_id == msg_id => {
                     return Some(self.requests.swap_remove(i));
@@ -573,4 +576,54 @@ pub async fn connect_with_auth<T: Transport>(
     auth_key: [u8; 256],
 ) -> Result<Sender<T, mtp::Encrypted>, io::Error> {
     Sender::connect(transport, mtp::Encrypted::build().finish(auth_key), addr).await
+}
+
+#[cfg(test)]
+mod tests {
+    use mtg_mtproto::transport::Full;
+
+    use super::*;
+
+    /// A plain sender connected to a throwaway local listener; it never talks.
+    async fn sender() -> (Sender<Full, mtp::Plain>, tokio::net::TcpListener) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let sender = Sender::connect(Full::new(), mtp::Plain::new(), ServerAddr::Tcp { address })
+            .await
+            .unwrap();
+        (sender, listener)
+    }
+
+    fn serialized(sender: &mut Sender<Full, mtp::Plain>, id: i64) {
+        let (result, _) = oneshot::channel();
+        sender.requests.push(Request {
+            body: vec![0; 8],
+            state: RequestState::Serialized(MsgIdPair::new(MsgId::from_raw(id))),
+            result,
+        });
+    }
+
+    #[tokio::test]
+    async fn a_response_for_an_unsent_request_is_ignored() {
+        let (mut s, _l) = sender().await;
+        serialized(&mut s, 4);
+        assert!(s.pop_request(MsgId::from_raw(4)).is_none());
+        assert_eq!(s.requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_bad_msg_for_an_unsent_request_is_ignored() {
+        let (mut s, _l) = sender().await;
+        serialized(&mut s, 4);
+        s.process_bad_message(mtp::BadMessage {
+            msg_id: MsgId::from_raw(4),
+            code: 16,
+        });
+        assert!(matches!(s.requests[0].state, RequestState::Serialized(_)));
+    }
+
+    #[test]
+    fn random_ids_increase() {
+        assert!(generate_random_id() < generate_random_id());
+    }
 }

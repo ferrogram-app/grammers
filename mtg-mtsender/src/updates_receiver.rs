@@ -11,9 +11,7 @@ use std::sync::Arc;
 
 use mtg_session::storages::ErasedSession;
 use mtg_session::types::{PeerId, PeerInfo, UpdateState, UpdatesState};
-use mtg_session::updates::{
-    MessageBoxes, PrematureEndReason, State, UpdateAndPeers, UpdatesLike,
-};
+use mtg_session::updates::{MessageBoxes, PrematureEndReason, State, UpdateAndPeers, UpdatesLike};
 use mtg_tl_types::{self as tl, Deserializable};
 use tokio::sync::mpsc;
 use tokio::time::timeout_at;

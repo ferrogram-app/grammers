@@ -123,6 +123,9 @@ pub enum Error {
     /// The server's `dh_prime` is invalid.
     InvalidDhPrime,
 
+    /// The server's `pq` could not be split into two primes.
+    FactorizationFailed,
+
     /// The operating system could not provide random bytes.
     RandomUnavailable,
 
@@ -187,6 +190,7 @@ impl fmt::Display for Error {
             }
             Self::InvalidG(g) => write!(f, "the parameter g was invalid: {g}"),
             Self::InvalidDhPrime => write!(f, "the parameter dh_prime was invalid"),
+            Self::FactorizationFailed => write!(f, "could not factorize the server's pq"),
             Self::RandomUnavailable => write!(f, "secure random bytes are unavailable"),
             Self::ClockBeforeEpoch => write!(f, "the system clock is before the Unix epoch"),
             Self::GParameterOutOfRange { low, high, value } => write!(
@@ -302,7 +306,7 @@ fn do_step2(
         u64::from_be_bytes(buffer)
     };
 
-    let (p, q) = factorize(pq);
+    let (p, q) = factorize(pq).ok_or(Error::FactorizationFailed)?;
     let new_nonce = {
         let mut buffer = [0; 32];
         buffer.copy_from_slice(&random_bytes[..32]);
@@ -752,6 +756,19 @@ fn key_for_fingerprint(fingerprint: i64) -> Option<rsa::Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pq_that_is_not_a_product_of_two_primes_is_an_error() {
+        // 2^61 - 1 is prime; before the fix this made the client spin forever
+        let response = tl::enums::ResPq::Pq(tl::types::ResPq {
+            nonce: [1; 16],
+            server_nonce: [2; 16],
+            pq: 2305843009213693951u64.to_be_bytes().to_vec(),
+            server_public_key_fingerprints: vec![-3414540481677951611],
+        });
+        let r = do_step2(Step1 { nonce: [1; 16] }, response, &[0; 32 + 224]);
+        assert!(matches!(r, Err(Error::FactorizationFailed)));
+    }
 
     #[test]
     fn a_too_short_encrypted_answer_is_an_error_not_a_panic() {
