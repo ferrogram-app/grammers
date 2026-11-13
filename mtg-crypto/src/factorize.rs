@@ -34,7 +34,8 @@ pub fn factorize(pq: u64) -> Option<(u64, u64)> {
         let c = attempt * (pq / 103);
         let (p, q) = factorize_with_param(pq, c);
         // `pq` comes from the server: a prime, 0 or 1 must fail instead of looping or lying.
-        if p > 1 && q > 1 && p.checked_mul(q) == Some(pq) {
+        // https://core.telegram.org/mtproto/auth_key: pq is the product of two different odd primes.
+        if p > 1 && q > 1 && p != q && p % 2 == 1 && q % 2 == 1 && p.checked_mul(q) == Some(pq) {
             return Some((p, q));
         }
     }
@@ -131,9 +132,16 @@ mod tests {
     fn a_prime_cannot_be_factorized() {
         // 2^61 - 1 is prime: the server sent us something that is not p * q
         assert_eq!(factorize(2305843009213693951), None);
-        for pq in [0, 1, 2, 3, 4] {
-            // 4 = 2 * 2 is a valid product; 0..=3 are not
-            assert_eq!(factorize(pq).is_some(), pq == 4, "{pq}");
+        for pq in [0, 1, 2, 3] {
+            assert_eq!(factorize(pq), None, "{pq}");
+        }
+    }
+
+    #[test]
+    fn pq_must_be_two_distinct_odd_primes() {
+        // 4 = 2 * 2, 9 = 3 * 3, 6 = 2 * 3, 10^18 = even
+        for pq in [4, 6, 9, 25, 1_000_000_000_000_000_000] {
+            assert_eq!(factorize(pq), None, "{pq}");
         }
     }
 }
