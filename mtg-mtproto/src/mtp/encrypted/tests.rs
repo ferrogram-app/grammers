@@ -857,3 +857,49 @@ fn the_clock_correction_subtracts_half_the_ping() {
     m.correct_time_offset(fresh(1));
     assert!((-3..=-2).contains(&m.time_offset), "{}", m.time_offset);
 }
+
+fn noise(len: usize) -> Vec<u8> {
+    let mut x = 0x9e3779b97f4a7c15u64;
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        })
+        .collect()
+}
+
+#[test]
+fn small_requests_are_always_tried_for_compression() {
+    assert!(looks_compressible(&noise(COMPRESSION_PROBE_LEN)));
+    assert!(looks_compressible(&[]));
+}
+
+#[test]
+fn a_large_request_is_judged_by_its_first_bytes() {
+    assert!(looks_compressible(&vec![0; 64 * 1024]));
+    assert!(!looks_compressible(&noise(64 * 1024)));
+
+    // shortcut documented on the function: incompressible head, compressible tail
+    let mut mixed = noise(COMPRESSION_PROBE_LEN);
+    mixed.extend(vec![0; 64 * 1024]);
+    assert!(!looks_compressible(&mixed));
+}
+
+#[test]
+fn an_incompressible_large_request_is_sent_unpacked_and_a_compressible_one_gzipped() {
+    let mut buffer = DequeBuffer::with_capacity(0, 0);
+    let mut mtproto = Encrypted::build().finish(auth_key());
+    let data = noise(64 * 1024);
+    assert!(mtproto.push(&mut buffer, &data).is_some());
+    mtproto.finalize_plain(&mut buffer);
+    // salt + session_id + msg_id + seq_no + len, then the body untouched
+    assert_eq!(&buffer[MESSAGE_PREFIX_LEN + 16..], &data[..]);
+
+    let mut buffer = DequeBuffer::with_capacity(0, 0);
+    let mut mtproto = Encrypted::build().finish(auth_key());
+    assert!(mtproto.push(&mut buffer, &vec![0; 64 * 1024]).is_some());
+    mtproto.finalize_plain(&mut buffer);
+    assert_eq!(&buffer[MESSAGE_PREFIX_LEN + 16..][..4], GZIP_PACKED_HEADER);
+}

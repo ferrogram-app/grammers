@@ -250,6 +250,14 @@ impl GzipPacked {
         Self { packed_data }
     }
 
+    /// Whether `sample` gets smaller at the fastest compression level.
+    pub fn shrinks_on_fast_level(sample: &[u8]) -> bool {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        // writing to and finishing an in-memory `Vec` encoder cannot fail
+        encoder.write_all(sample).unwrap();
+        encoder.finish().unwrap().len() < sample.len()
+    }
+
     /// Inflates the payload, refusing to produce more than [`MAX_DECOMPRESSED_SIZE`] bytes.
     pub fn decompress(&self) -> Result<Vec<u8>, mtp::DeserializeError> {
         let mut decoder = GzDecoder::new(Capped(Vec::new()));

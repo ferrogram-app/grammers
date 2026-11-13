@@ -163,6 +163,22 @@ fn new_session_id() -> i64 {
     i64::from_le_bytes(buffer)
 }
 
+/// How much of a large request is compressed on a trial basis before the whole is.
+const COMPRESSION_PROBE_LEN: usize = 8 * 1024;
+
+/// Whether compressing `request` is worth the CPU time.
+///
+/// Uploads send hundreds of kilobytes of already compressed media, and compressing those at the
+/// best level costs milliseconds per part only for the result to be thrown away. A request longer
+/// than the probe is therefore judged by its first [`COMPRESSION_PROBE_LEN`] bytes.
+///
+/// shortcut: a request that starts incompressible and ends compressible is sent as is,
+/// upgrade when such requests turn up.
+fn looks_compressible(request: &[u8]) -> bool {
+    request.len() <= COMPRESSION_PROBE_LEN
+        || manual_tl::GzipPacked::shrinks_on_fast_level(&request[..COMPRESSION_PROBE_LEN])
+}
+
 impl Builder {
     /// Configures the time offset to Telegram servers.
     pub fn time_offset(mut self, offset: i32) -> Self {
@@ -493,6 +509,7 @@ impl Mtp for Encrypted {
         let compressed;
         if let Some(threshold) = self.compression_threshold
             && request.len() >= threshold
+            && looks_compressible(request)
         {
             compressed = manual_tl::GzipPacked::new(request).to_bytes();
             if compressed.len() < request.len() {
