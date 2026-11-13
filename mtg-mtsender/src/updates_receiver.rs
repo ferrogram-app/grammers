@@ -23,6 +23,8 @@ use crate::{InvocationError, SenderPoolHandle, UpdatesConfiguration};
 const BOT_CHANNEL_DIFF_LIMIT: i32 = 100000;
 const USER_CHANNEL_DIFF_LIMIT: i32 = 100;
 
+/// Receives the updates of a [`SenderPool`](crate::SenderPool) and keeps the update state
+/// (pts/qts/seq) in sync with the server, fetching differences when needed.
 pub struct UpdatesReceiver {
     handle: SenderPoolHandle,
     session: Arc<ErasedSession>,
@@ -42,6 +44,7 @@ async fn prepare_channel_difference(
 > {
     let id = match &request.channel {
         tl::enums::InputChannel::Channel(channel) => PeerId::channel_unchecked(channel.channel_id),
+        // invariant: we only build `GetChannelDifference` with `InputChannel::Channel`
         _ => unreachable!(),
     };
 
@@ -81,6 +84,7 @@ async fn prepare_channel_difference(
 }
 
 impl UpdatesReceiver {
+    /// Creates the receiver from the pool handle and the session holding the update state.
     pub async fn create(
         handle: SenderPoolHandle,
         session: Arc<ErasedSession>,

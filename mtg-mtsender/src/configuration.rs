@@ -66,6 +66,7 @@ pub struct ConnectionParams {
     /// When the channel is full, newly received updates are **dropped**.
     pub updates_channel_capacity: NonZeroUsize,
 
+    /// Builds the transport used for each new connection.
     pub transport: Box<TransportFactory>,
 
     #[doc(hidden)]
@@ -153,6 +154,7 @@ impl Default for ConnectionParams {
             #[cfg(feature = "proxy")]
             proxy_url: None,
             retry_policy: Box::new(super::AutoSleep::default()),
+            // 100 is not zero
             updates_channel_capacity: NonZeroUsize::new(100).unwrap(),
             transport: Box::new(|| Box::new(transport::Full::new())),
             __non_exhaustive: (),

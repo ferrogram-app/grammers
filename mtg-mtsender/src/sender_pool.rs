@@ -182,6 +182,7 @@ impl SenderPoolHandle {
         dc_id: i32,
         request_body: Vec<u8>,
     ) -> Result<Vec<u8>, InvocationError> {
+        // 1 is not zero
         let mut fail_count = NonZeroU32::new(1).unwrap();
         let mut slept_so_far = Duration::default();
 
@@ -299,6 +300,7 @@ impl SenderPoolRunner {
             tokio::select! {
                 biased;
                 completion = self.connection_pool.join_next(), if !self.connection_pool.is_empty() => {
+                    // guarded by `!is_empty()`, so `join_next` is `Some`
                     if let Err(err) = completion.unwrap()
                         && let Ok(reason) = err.try_into_panic()
                     {
@@ -405,6 +407,7 @@ impl SenderPoolRunner {
             rpc_tx,
             abort_handle,
         });
+        // just pushed above
         Ok(self.connections.last().unwrap())
     }
 

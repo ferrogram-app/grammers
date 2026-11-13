@@ -67,11 +67,11 @@ impl NetStream {
         let password = proxy.password().unwrap_or("");
         let socks_addr = match host {
             Host::Domain(domain) => {
-                let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
-                let response = resolver
-                    .lookup_ip(domain)
-                    .await
-                    .map_err(|err| io::Error::new(ErrorKind::Other, err))?;
+                let resolver = Resolver::builder_tokio()
+                    .map_err(io::Error::other)?
+                    .build()
+                    .map_err(io::Error::other)?;
+                let response = resolver.lookup_ip(domain).await.map_err(io::Error::other)?;
                 let socks_ip_addr = response.iter().next().ok_or(io::Error::new(
                     ErrorKind::NotFound,
                     format!("proxy host did not return any ip address: {}", domain),

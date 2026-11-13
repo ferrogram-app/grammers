@@ -16,9 +16,14 @@ pub enum ServerAddr {
     /// Socket address whose connection should be proxied.
     #[cfg(feature = "proxy")]
     Proxied {
+        /// The server to reach through the proxy.
         address: std::net::SocketAddr,
+        /// The proxy URL (`socks5://[user:password@]host:port`).
         proxy: String,
     },
     /// Proxy address for direct connection.
-    Tcp { address: std::net::SocketAddr },
+    Tcp {
+        /// The server to connect to.
+        address: std::net::SocketAddr,
+    },
 }

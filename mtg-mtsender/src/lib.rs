@@ -22,6 +22,7 @@
 //! multiple [`SenderPoolHandle`]s.
 
 #![deny(unsafe_code)]
+#![warn(missing_docs)]
 
 mod configuration;
 mod errors;

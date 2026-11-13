@@ -142,6 +142,7 @@ impl<T: Transport, M: mtp::Mtp> Sender<T, M> {
         body: Vec<u8>,
         tx: oneshot::Sender<Result<Vec<u8>, InvocationError>>,
     ) {
+        // contract: every serialized TL request starts with its 4-byte constructor id
         assert!(body.len() >= 4);
         let req_id = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
         debug!(
@@ -166,6 +167,7 @@ impl<T: Transport, M: mtp::Mtp> Sender<T, M> {
                 Ok(x) => break x,
                 Err(TryRecvError::Empty) => continue,
                 Err(TryRecvError::Closed) => {
+                    // invariant: the sender half lives in `self.requests` until it answers
                     panic!("request channel dropped before receiving a result")
                 }
             }
@@ -402,8 +404,15 @@ impl<T: Transport, M: mtp::Mtp> Sender<T, M> {
     fn process_result(&mut self, result: mtp::RpcResult) {
         if let Some(req) = self.pop_request(result.msg_id) {
             let x = result.body;
-            assert!(x.len() >= 4);
-            let res_id = u32::from_le_bytes([x[0], x[1], x[2], x[3]]);
+            // The server controls this body: too short to hold a constructor id is an error
+            // for the caller, not a panic.
+            let Some(head) = x.first_chunk::<4>() else {
+                drop(req.result.send(Err(InvocationError::Dropped(
+                    "rpc result shorter than a constructor id",
+                ))));
+                return;
+            };
+            let res_id = u32::from_le_bytes(*head);
             debug!(
                 res_id = format_args!("{:x}", res_id),
                 res_name = tl::name_for_id(res_id),
@@ -540,6 +549,7 @@ impl<T: Transport, M: mtp::Mtp> Sender<T, M> {
 }
 
 impl<T: Transport> Sender<T, mtp::Encrypted> {
+    /// The authorization key this sender encrypts with.
     pub fn auth_key(&self) -> [u8; 256] {
         self.state.mtp.auth_key()
     }
@@ -681,6 +691,21 @@ mod tests {
                 Ok(Err(InvocationError::Dropped(_)))
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn an_rpc_result_shorter_than_a_constructor_id_is_an_error() {
+        let (mut s, _l) = sender().await;
+        let mut rx = sent(&mut s, 4);
+        s.process_result(mtp::RpcResult {
+            msg_id: MsgId::from_raw(4),
+            body: vec![1, 2],
+        });
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Err(InvocationError::Dropped(_)))
+        ));
+        assert!(s.requests.is_empty());
     }
 
     #[tokio::test]
