@@ -2,8 +2,6 @@
 
 Rust crates for Telegram's MTProto API, used by [Ferrogram](https://github.com/ferrogram-app).
 
-A fork of [grammers](https://codeberg.org/Lonami/grammers) by Lonami.
-
 ## Crates
 
 Arrows point to a dependency; links implied through another crate are left out.
@@ -38,4 +36,4 @@ exchange in `mtg-mtproto`.
 ## License
 
 MIT ([LICENSE-MIT](LICENSE-MIT)) or Apache-2.0 ([LICENSE-APACHE](LICENSE-APACHE)), at your option.
-The original copyright notices of grammers are kept.
+Earlier copyright notices are kept in the license files and in the source file headers.
