@@ -441,7 +441,13 @@ impl Client {
         let g_b = password_info.srp_b.clone().unwrap();
         let a = password_info.secure_random.clone();
 
-        let (m1, g_a) = calculate_2fa(salt1, salt2, p, g, g_b, a, password);
+        // None: the server sent a g_b that is out of range
+        let (m1, g_a) = calculate_2fa(salt1, salt2, p, g, g_b, a, password).ok_or_else(|| {
+            SignInError::Other(InvocationError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid SRP parameters from the server",
+            )))
+        })?;
 
         let check_password = tl::functions::auth::CheckPassword {
             password: tl::enums::InputCheckPasswordSrp::Srp(tl::types::InputCheckPasswordSrp {

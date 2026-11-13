@@ -30,17 +30,22 @@ pub fn calculate_2fa(
     g_b: Vec<u8>,
     a: Vec<u8>,
     password: impl AsRef<[u8]>,
-) -> ([u8; 32], [u8; 256]) {
+) -> Option<([u8; 32], [u8; 256])> {
     // Prepare our parameters
     let big_p = BigInt::from_bytes_be(Sign::Plus, p);
 
-    let g_b = pad_to_256(&g_b);
-    let a = pad_to_256(&a);
+    // `g_b` comes from the server: more than 256 bytes cannot be a residue mod a 2048-bit p
+    let g_b = pad_to_256(&g_b)?;
+    let a = pad_to_256(&a)?;
 
     let g_for_hash = vec![*g as u8];
-    let g_for_hash = pad_to_256(&g_for_hash);
+    let g_for_hash = pad_to_256(&g_for_hash)?;
 
     let big_g_b = BigInt::from_bytes_be(Sign::Plus, &g_b);
+    // Not on the srp page, but it is the auth_key rule: 1 < g_b < p (g_b = 0 mod p leaks the key).
+    if big_g_b <= BigInt::from(1u8) || big_g_b >= big_p {
+        return None;
+    }
 
     let big_g = BigInt::from(*g as u32);
     let big_a = BigInt::from_bytes_be(Sign::Plus, &a);
@@ -51,7 +56,7 @@ pub fn calculate_2fa(
 
     // g_a := pow(g, a) mod p
     let g_a = big_g.modpow(&big_a, &big_p);
-    let g_a = pad_to_256(&g_a.to_bytes_be().1);
+    let g_a = pad_to_256(&g_a.to_bytes_be().1)?;
 
     // u := H(g_a | g_b)
     let u = h!(&g_a, &g_b);
@@ -76,7 +81,7 @@ pub fn calculate_2fa(
     let big_s_a = big_t.modpow(&second, &big_p);
 
     // k_a := H(s_a)
-    let k_a = h!(&pad_to_256(&big_s_a.to_bytes_be().1));
+    let k_a = h!(&pad_to_256(&big_s_a.to_bytes_be().1)?);
 
     // M1 := H(H(p) xor H(g) | H(salt1) | H(salt2) | g_a | g_b | k_a)
     let h_p = h!(&p);
@@ -86,7 +91,7 @@ pub fn calculate_2fa(
 
     let m1 = h!(&p_xor_g, &h!(&salt1), &h!(&salt2), &g_a, &g_b, &k_a);
 
-    (m1, g_a)
+    Some((m1, g_a))
 }
 
 /// Validation for parameters required for Two-Factor authentication.
@@ -128,8 +133,9 @@ fn check_p_prime_and_subgroup(p: &[u8], g: &i32) -> bool {
     }
 }
 
+/// 2^2047 < p < 2^2048: exactly 256 bytes with the top bit set.
 fn check_p_len(p: &[u8]) -> bool {
-    p.len() == 256
+    p.len() == 256 && p[0] & 0x80 != 0
 }
 
 // SH(data, salt) := H(salt | data | salt)
@@ -162,10 +168,11 @@ fn xor(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     out
 }
 
-fn pad_to_256(data: &[u8]) -> [u8; 256] {
+fn pad_to_256(data: &[u8]) -> Option<[u8; 256]> {
     let mut out = [0; 256];
-    out[256 - data.len()..].copy_from_slice(data);
-    out
+    out.get_mut(256usize.checked_sub(data.len())?..)?
+        .copy_from_slice(data);
+    Some(out)
 }
 
 #[cfg(test)]
@@ -180,16 +187,46 @@ mod tests {
     }
 
     #[test]
+    fn p_must_have_the_top_bit_set() {
+        // a small safe prime padded with zeros to 256 bytes is below 2^2047
+        let mut p = [0u8; 256];
+        p[255] = 23;
+        assert!(!check_p_len(&p));
+        assert!(!check_p_and_g(&p, &4));
+        assert!(!check_p_len(&[0x80; 255]));
+        assert!(check_p_len(&[0x80; 256]));
+    }
+
+    #[test]
+    fn hostile_g_b_is_rejected_not_a_panic() {
+        let p = [0xffu8; 256];
+        let call = |g_b: Vec<u8>| calculate_2fa(&[1], &[2], &p, &3, g_b, vec![1], "pw");
+        assert!(call(vec![1; 257]).is_none()); // too long
+        assert!(call(vec![]).is_none()); // 0
+        assert!(call(vec![1]).is_none()); // 1
+        assert!(call(vec![0xff; 256]).is_none()); // >= p
+        assert!(calculate_2fa(&[1], &[2], &p, &3, vec![5], vec![1; 257], "pw").is_none()); // a too long
+        assert!(call(vec![5]).is_some());
+    }
+
+    #[test]
+    fn padding_to_256() {
+        assert!(pad_to_256(&[0; 257]).is_none());
+        assert_eq!(pad_to_256(&[7; 256]), Some([7; 256]));
+        assert_eq!(pad_to_256(&[]), Some([0; 256]));
+    }
+
+    #[test]
     fn check_calculations_1() {
         let salt1 = vec![1];
         let salt2 = vec![2];
         let g = 3;
-        let p = pad_to_256(&[47]);
+        let p = pad_to_256(&[47]).unwrap();
         let g_b = vec![5];
         let a = vec![6];
         let password = vec![7];
 
-        let (m1, g_a) = calculate_2fa(&salt1, &salt2, &p, &g, g_b, a, password);
+        let (m1, g_a) = calculate_2fa(&salt1, &salt2, &p, &g, g_b, a, password).unwrap();
 
         let expected_m1 = vec![
             157, 131, 196, 103, 0, 184, 116, 232, 7, 196, 85, 231, 17, 36, 30, 222, 158, 234, 98,
@@ -286,7 +323,7 @@ mod tests {
         ];
         let password = vec![50, 51, 52, 53, 54, 55];
 
-        let (m1, g_a) = calculate_2fa(&salt1, &salt2, &p, &g, g_b, a, password);
+        let (m1, g_a) = calculate_2fa(&salt1, &salt2, &p, &g, g_b, a, password).unwrap();
 
         let expected_m1 = vec![
             77, 122, 244, 18, 197, 162, 231, 177, 84, 103, 55, 107, 209, 24, 184, 83, 96, 78, 104,
