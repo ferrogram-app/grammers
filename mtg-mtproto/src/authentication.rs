@@ -760,6 +760,66 @@ fn key_for_fingerprint(fingerprint: i64) -> Option<rsa::Key> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn every_error_displays_and_range_checks_reject_the_edges() {
+        let all = [
+            Error::InvalidNonce {
+                got: [1; 16],
+                expected: [2; 16],
+            },
+            Error::InvalidPqSize { size: 3 },
+            Error::UnknownFingerprints {
+                fingerprints: vec![1],
+            },
+            Error::DhParamsFail,
+            Error::InvalidServerNonce {
+                got: [1; 16],
+                expected: [2; 16],
+            },
+            Error::EncryptedResponseNotPadded { len: 5 },
+            Error::InvalidDhInnerData {
+                error: tl::deserialize::Error::UnexpectedEof,
+            },
+            Error::InvalidG(5),
+            Error::InvalidDhPrime,
+            Error::FactorizationFailed,
+            Error::RandomUnavailable,
+            Error::ClockBeforeEpoch,
+            Error::GParameterOutOfRange {
+                value: BigUint::from(1u8),
+                low: BigUint::from(2u8),
+                high: BigUint::from(3u8),
+            },
+            Error::DhGenRetry,
+            Error::DhGenFail,
+            Error::InvalidAnswerHash {
+                got: [1; 20],
+                expected: [2; 20],
+            },
+            Error::InvalidNewNonceHash {
+                got: [1; 16],
+                expected: [2; 16],
+            },
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for e in all {
+            assert!(seen.insert(e.to_string()), "{e:?}");
+        }
+
+        let (lo, hi) = (BigUint::from(10u8), BigUint::from(20u8));
+        assert!(check_g_in_range(&BigUint::from(15u8), &lo, &hi).is_ok());
+        for v in [10u8, 20, 5, 25] {
+            assert!(check_g_in_range(&BigUint::from(v), &lo, &hi).is_err());
+        }
+        assert!(check_nonce(&[1; 16], &[1; 16]).is_ok());
+        assert!(check_server_nonce(&[1; 16], &[1; 16]).is_ok());
+        assert!(check_server_nonce(&[1; 16], &[2; 16]).is_err());
+        assert!(check_new_nonce_hash(&[1; 16], &[2; 16]).is_err());
+        assert!(key_for_fingerprint(-3414540481677951611).is_some());
+        assert!(key_for_fingerprint(-5595554452916591101).is_some());
+        assert!(key_for_fingerprint(1).is_none());
+    }
+
     fn step3() -> Step3 {
         Step3 {
             nonce: [1; 16],
