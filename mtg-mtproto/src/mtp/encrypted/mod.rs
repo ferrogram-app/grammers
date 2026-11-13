@@ -115,6 +115,12 @@ pub struct Encrypted {
     /// The ids of the latest server messages, to drop a message the server sent twice.
     seen_msg_ids: std::collections::VecDeque<i64>,
 
+    /// The last ping we sent and when, to measure its round trip on the pong.
+    ping_sent: Option<(i64, Instant)>,
+
+    /// Smoothed round trip to the server in milliseconds, once a pong has been measured.
+    ping_ms: Option<i64>,
+
     /// The session id before the last `recreate_session`: answers still in flight use it.
     previous_session_id: Option<i64>,
 
@@ -194,6 +200,8 @@ impl Builder {
             pending_ack: vec![],
             seen_sessions: std::collections::VecDeque::new(),
             seen_msg_ids: Default::default(),
+            ping_sent: None,
+            ping_ms: None,
             previous_session_id: None,
             pending_resend: Vec::new(),
             resend_asked: Vec::new(),
@@ -220,12 +228,25 @@ impl Encrypted {
         self.auth_key.to_bytes()
     }
 
-    /// Correct our time offset based on a known valid message ID.
+    /// Correct our time offset based on a known valid message ID, as the official client does:
+    /// the server stamped the message about half a round trip ago.
     fn correct_time_offset(&mut self, msg_id: i64) {
-        let now = since_epoch().as_secs() as i32;
+        let server_ms = ((msg_id as u64 as u128 * 1000) >> 32) as i64;
+        let now_ms = since_epoch().as_millis() as i64;
+        let half_ping = self.ping_ms.map_or(0, |ping| ping / 2);
+        self.time_offset = ((server_ms - now_ms - half_ping) / 1000) as i32;
+    }
 
-        let correct = (msg_id >> 32) as i32;
-        self.time_offset = correct - now;
+    /// Folds a measured round trip into the smoothed ping, like the official client.
+    fn add_ping_sample(&mut self, sample_ms: i64) {
+        // The official client ignores samples of 10 s and more: they say nothing about the link.
+        if sample_ms >= 10_000 {
+            return;
+        }
+        self.ping_ms = Some(
+            self.ping_ms
+                .map_or(sample_ms, |ping| (ping + sample_ms) / 2),
+        );
     }
 
     /// Starts a new session (new id, sequence from zero), as the official client does when the
@@ -479,7 +500,14 @@ impl Mtp for Encrypted {
             }
         }
 
-        self.try_serialize_msg(buffer, body, true)
+        let msg_id = self.try_serialize_msg(buffer, body, true)?;
+        if request.starts_with(&tl::functions::Ping::CONSTRUCTOR_ID.to_le_bytes())
+            || request
+                .starts_with(&tl::functions::PingDelayDisconnect::CONSTRUCTOR_ID.to_le_bytes())
+        {
+            self.ping_sent = Some((msg_id.0, Instant::now()));
+        }
+        Some(msg_id)
     }
 
     fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId> {

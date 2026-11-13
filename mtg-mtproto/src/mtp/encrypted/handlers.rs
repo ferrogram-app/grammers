@@ -434,7 +434,7 @@ impl Encrypted {
                 // The server's id is the best clock we have, and ours must not go below the
                 // one it just rejected. The single salt left makes `push` ask for more.
                 self.correct_time_offset(message.msg_id);
-                self.last_msg_id = self.last_msg_id.max(x.bad_msg_id);
+                self.last_msg_id = self.last_msg_id.max(message.msg_id);
 
                 info!("got bad salt; salts have been reset down to a single one");
                 return Ok(());
@@ -722,6 +722,13 @@ impl Encrypted {
     /// [Deferred Connection Closure + PING]: https://core.telegram.org/mtproto/service_messages#deferred-connection-closure-ping
     fn handle_pong(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
         let tl::enums::Pong::Pong(pong) = tl::enums::Pong::from_bytes(&message.body)?;
+
+        if let Some((sent_id, sent_at)) = self.ping_sent
+            && sent_id == pong.msg_id
+        {
+            self.ping_sent = None;
+            self.add_ping_sample(sent_at.elapsed().as_millis() as i64);
+        }
 
         self.deserialization
             .push(Deserialization::RpcResult(RpcResult {

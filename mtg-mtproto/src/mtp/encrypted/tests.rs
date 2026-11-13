@@ -736,7 +736,7 @@ fn a_bad_server_salt_also_fixes_the_clock_and_the_next_message_id() {
     );
     m.process_message(inner(fresh(1), bad_salt)).unwrap();
     assert!(m.time_offset.abs() < 5, "{}", m.time_offset);
-    assert_eq!(m.last_msg_id, bad_id);
+    assert_eq!(m.last_msg_id, fresh(1));
 }
 
 fn detailed(answer: i64) -> Vec<u8> {
@@ -798,4 +798,62 @@ fn a_full_container_keeps_the_resend_request_pending() {
     let mut buffer = DequeBuffer::with_capacity(0, 0);
     assert!(m.push(&mut buffer, REQUEST).is_none());
     assert_eq!(m.pending_resend, vec![222]);
+}
+
+fn pong_for(msg_id: i64) -> Vec<u8> {
+    use tl::Serializable;
+    tl::enums::Pong::Pong(tl::types::Pong { msg_id, ping_id: 1 }).to_bytes()
+}
+
+#[test]
+fn a_pong_measures_the_round_trip_and_smooths_it() {
+    use tl::Serializable;
+    let mut m = Encrypted::build().finish(auth_key());
+    let ping = tl::functions::Ping { ping_id: 1 }.to_bytes();
+    let mut buffer = DequeBuffer::with_capacity(0, 0);
+    let sent = m.push(&mut buffer, &ping).unwrap();
+    assert_eq!(m.ping_sent.map(|(id, _)| id), Some(sent.0));
+
+    // a pong for another message does not count
+    feed(&mut m, 1, pong_for(sent.0 + 4)).unwrap();
+    assert_eq!(m.ping_ms, None);
+
+    m.ping_sent = Some((sent.0, Instant::now() - std::time::Duration::from_secs(2)));
+    feed(&mut m, 2, pong_for(sent.0)).unwrap();
+    assert!((2000..2100).contains(&m.ping_ms.unwrap()));
+    assert!(m.ping_sent.is_none());
+
+    // next sample is averaged with the previous one
+    m.ping_ms = Some(2000);
+    m.add_ping_sample(4000);
+    assert_eq!(m.ping_ms, Some(3000));
+    // a sample of 10 s or more is ignored
+    m.add_ping_sample(10_000);
+    assert_eq!(m.ping_ms, Some(3000));
+}
+
+#[test]
+fn a_ping_with_delayed_disconnect_is_measured_too() {
+    use tl::Serializable;
+    let mut m = Encrypted::build().finish(auth_key());
+    let ping = tl::functions::PingDelayDisconnect {
+        ping_id: 1,
+        disconnect_delay: 75,
+    }
+    .to_bytes();
+    let mut buffer = DequeBuffer::with_capacity(0, 0);
+    let sent = m.push(&mut buffer, &ping).unwrap();
+    assert_eq!(m.ping_sent.map(|(id, _)| id), Some(sent.0));
+}
+
+#[test]
+fn the_clock_correction_subtracts_half_the_ping() {
+    let mut m = Encrypted::build().finish(auth_key());
+    m.time_offset = 1000;
+    m.correct_time_offset(fresh(1));
+    assert!((-1..=0).contains(&m.time_offset), "{}", m.time_offset);
+
+    m.ping_ms = Some(4000);
+    m.correct_time_offset(fresh(1));
+    assert!((-3..=-2).contains(&m.time_offset), "{}", m.time_offset);
 }
