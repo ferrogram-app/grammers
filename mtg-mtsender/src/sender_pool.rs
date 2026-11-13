@@ -25,7 +25,7 @@ use tokio::{
     task::JoinSet,
     time::sleep,
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::configuration::{ConnectionParams, RetryContext};
 use crate::errors::{InvocationError, ReadError};
@@ -43,6 +43,7 @@ enum Request {
         tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
     },
     CheckRetry {
+        dc_id: i32,
         error: InvocationError,
         fail_count: NonZeroU32,
         slept_so_far: Duration,
@@ -191,7 +192,7 @@ impl SenderPoolHandle {
                 Ok(response) => break Ok(response),
                 Err(e) => {
                     let error_info = format!("{}", e);
-                    match self.check_retry(e, fail_count, slept_so_far).await {
+                    match self.check_retry(dc_id, e, fail_count, slept_so_far).await {
                         ControlFlow::Continue(delay) => {
                             info!(?delay, "sleeping on {} before retrying", error_info);
                             sleep(delay).await;
@@ -210,6 +211,7 @@ impl SenderPoolHandle {
     /// to check whether the request needs to retry.
     async fn check_retry(
         &self,
+        dc_id: i32,
         error: InvocationError,
         fail_count: NonZeroU32,
         slept_so_far: Duration,
@@ -218,6 +220,7 @@ impl SenderPoolHandle {
         if self
             .0
             .send(Request::CheckRetry {
+                dc_id,
                 error,
                 fail_count,
                 slept_so_far,
@@ -348,11 +351,15 @@ impl SenderPoolRunner {
                 ControlFlow::Continue(())
             }
             Request::CheckRetry {
+                dc_id,
                 error,
                 fail_count,
                 slept_so_far,
                 tx,
             } => {
+                if is_auth_key_duplicated(&error) {
+                    self.forget_auth_key(dc_id).await;
+                }
                 let retry_context = RetryContext {
                     fail_count,
                     slept_so_far,
@@ -381,6 +388,24 @@ impl SenderPoolRunner {
                 ControlFlow::Continue(())
             }
             Request::Quit => ControlFlow::Break(()),
+        }
+    }
+
+    /// The server invalidated our key (`AUTH_KEY_DUPLICATED`, the key was used from two
+    /// connections): forget it and drop the connection, so the next request makes a new key.
+    async fn forget_auth_key(&mut self, dc_id: i32) {
+        warn!(dc_id, "auth key was invalidated by the server; dropping it");
+        self.connections.retain(|connection| {
+            if connection.dc_id == dc_id {
+                connection.abort_handle.abort();
+            }
+            connection.dc_id != dc_id
+        });
+        if let Ok(Some(mut dc_option)) = self.session.dc_option(dc_id) {
+            dc_option.auth_key = None;
+            if let Err(err) = self.session.set_dc_option(&dc_option).await {
+                error!(%err, "could not forget the invalidated auth key");
+            }
         }
     }
 
@@ -501,6 +526,12 @@ impl SenderPoolRunner {
     }
 }
 
+/// `406 AUTH_KEY_DUPLICATED`: the session was already invalidated by the server, a new auth key
+/// and a new login are needed (<https://core.telegram.org/api/errors>).
+fn is_auth_key_duplicated(error: &InvocationError) -> bool {
+    matches!(error, InvocationError::Rpc(err) if err.code == 406 && err.name == "AUTH_KEY_DUPLICATED")
+}
+
 /// Puts the address of `option` into `dc_option`; `false` if the address does not parse.
 fn merge_dc_option(dc_option: &mut DcOption, option: &tl::types::DcOption) -> bool {
     if option.ipv6 {
@@ -598,12 +629,14 @@ impl fmt::Debug for Request {
                 .field("tx", tx)
                 .finish(),
             Self::CheckRetry {
+                dc_id,
                 error,
                 fail_count,
                 slept_so_far,
                 tx,
             } => f
                 .debug_struct("CheckRetry")
+                .field("dc_id", dc_id)
                 .field("error", error)
                 .field("fail_count", fail_count)
                 .field("slept_so_far", slept_so_far)
@@ -620,6 +653,7 @@ impl fmt::Debug for Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RpcError;
 
     fn tl_option(ipv6: bool, ip: &str, port: i32) -> tl::types::DcOption {
         tl::types::DcOption {
@@ -634,6 +668,64 @@ mod tests {
             port,
             secret: None,
         }
+    }
+
+    fn rpc(code: i32, name: &str) -> InvocationError {
+        InvocationError::Rpc(RpcError {
+            code,
+            name: name.into(),
+            value: None,
+            caused_by: None,
+        })
+    }
+
+    #[test]
+    fn only_a_406_auth_key_duplicated_invalidates_the_key() {
+        assert!(is_auth_key_duplicated(&rpc(406, "AUTH_KEY_DUPLICATED")));
+        assert!(!is_auth_key_duplicated(&rpc(406, "OTHER")));
+        assert!(!is_auth_key_duplicated(&rpc(401, "AUTH_KEY_DUPLICATED")));
+        assert!(!is_auth_key_duplicated(&InvocationError::InvalidDc));
+    }
+
+    #[tokio::test]
+    async fn the_runner_forgets_the_key_of_a_duplicated_session() {
+        let mut session = mtg_session::SessionData::default();
+        let mut dc = empty();
+        dc.auth_key = Some([7; 256]);
+        session.dc_options.insert(2, dc);
+        let session = Arc::new(mtg_session::storages::MemorySession::from(session));
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut runner = pool.runner;
+
+        let (tx, rx) = oneshot::channel();
+        let flow = runner
+            .process_request(Request::CheckRetry {
+                dc_id: 2,
+                error: rpc(406, "AUTH_KEY_DUPLICATED"),
+                fail_count: NonZeroU32::MIN,
+                slept_so_far: Duration::ZERO,
+                tx,
+            })
+            .await;
+        assert!(flow.is_continue());
+        assert!(matches!(rx.await, Ok(ControlFlow::Break(_))));
+        assert_eq!(session.dc_option(2).unwrap().unwrap().auth_key, None);
+
+        // another error leaves the key alone
+        let mut dc = empty();
+        dc.auth_key = Some([7; 256]);
+        session.set_dc_option(&dc).await.unwrap();
+        let (tx, _rx) = oneshot::channel();
+        let _ = runner
+            .process_request(Request::CheckRetry {
+                dc_id: 2,
+                error: rpc(420, "FLOOD_WAIT"),
+                fail_count: NonZeroU32::MIN,
+                slept_so_far: Duration::ZERO,
+                tx,
+            })
+            .await;
+        assert!(session.dc_option(2).unwrap().unwrap().auth_key.is_some());
     }
 
     fn empty() -> DcOption {
