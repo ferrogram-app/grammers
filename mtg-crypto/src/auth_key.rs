@@ -160,3 +160,19 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod accessor_tests {
+    use super::*;
+
+    #[test]
+    fn bytes_roundtrip_equality_and_debug() {
+        let k = AuthKey::from_bytes([3; 256]);
+        assert_eq!(k.to_bytes(), [3; 256]);
+        assert_eq!(k, AuthKey::from_bytes(k.to_bytes()));
+        assert_ne!(k, AuthKey::from_bytes([4; 256]));
+        // the debug output must not leak the key
+        assert!(format!("{k:?}").starts_with("AuthKey { key_id: "));
+        assert!(!format!("{k:?}").contains("data"));
+    }
+}

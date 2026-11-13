@@ -143,4 +143,41 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn increment_carries_and_wraps() {
+        let mut a = [0x00, 0xff];
+        increment(&mut a);
+        assert_eq!(a, [0x01, 0x00]);
+        let mut a = [0x01, 0x02];
+        increment(&mut a);
+        assert_eq!(a, [0x01, 0x03]);
+        // all ones: wraps to zero, then counts once more (2^-256 case, never hit)
+        let mut a = [0xff, 0xff];
+        increment(&mut a);
+        assert_eq!(a, [0x00, 0x01]);
+    }
+
+    #[test]
+    fn output_is_always_256_bytes_even_with_leading_zeros() {
+        // n just over 2^2047: many candidates are >= n and retried with an incremented temp_key;
+        // results below 2^2040 need zero padding
+        let n = (BigUint::from(1u8) << 2047usize) + 12345u32;
+        let key = Key::new(&n.to_string(), "1").unwrap(); // e = 1 keeps it fast
+        let mut short = false;
+        for seed in 0..5000u32 {
+            let rnd: [u8; 224] =
+                std::array::from_fn(|i| (seed as usize * 31 + i * 7) as u8 ^ seed as u8);
+            let out = encrypt_hashed(&[1, 2, 3], &key, &rnd);
+            assert_eq!(out.len(), 256);
+            short |= out[0] == 0;
+        }
+        assert!(short, "no seed produced a leading zero byte");
+    }
+
+    #[test]
+    fn key_new_rejects_garbage() {
+        assert!(Key::new("12x", "3").is_none());
+        assert!(Key::new("12", "y").is_none());
+    }
 }

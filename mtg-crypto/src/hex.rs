@@ -51,3 +51,24 @@ pub fn opt_from_hex(hex: &str) -> Option<Vec<u8>> {
 pub fn from_hex(hex: &str) -> Vec<u8> {
     opt_from_hex(hex).unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_roundtrip_and_errors() {
+        assert_eq!(to_hex(&[0, 0xab, 0xff]), "00abff");
+        assert_eq!(opt_from_hex("00ABff"), Some(vec![0, 0xab, 0xff]));
+        assert_eq!(opt_from_hex("abc"), None);
+        assert_eq!(opt_from_hex("0g"), None);
+        assert_eq!(opt_from_hex("g0"), None);
+        assert_eq!(from_hex(""), Vec::<u8>::new());
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_hex_panics_on_garbage() {
+        from_hex("zz");
+    }
+}
