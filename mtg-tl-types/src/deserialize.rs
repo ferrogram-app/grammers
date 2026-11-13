@@ -416,7 +416,10 @@ impl Deserializable for String {
     /// );
     /// ```
     fn deserialize(buf: Buffer) -> Result<Self> {
-        Ok(String::from_utf8_lossy(&Vec::<u8>::deserialize(buf)?).into())
+        // Valid UTF-8 (the normal case) is taken as is, without the byte-wise lossy scan and a
+        // second copy; invalid bytes still become U+FFFD as before.
+        Ok(String::from_utf8(Vec::<u8>::deserialize(buf)?)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
     }
 }
 
@@ -458,5 +461,24 @@ impl Deserializable for Vec<u8> {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod string_tests {
+    use super::*;
+
+    #[test]
+    fn a_valid_string_is_returned_unchanged() {
+        assert_eq!(String::from_bytes(&[3, b'a', b'b', b'c']).unwrap(), "abc");
+        assert_eq!(String::from_bytes(&[0, 0, 0, 0]).unwrap(), "");
+    }
+
+    #[test]
+    fn invalid_utf8_becomes_replacement_characters() {
+        assert_eq!(
+            String::from_bytes(&[2, 0xff, b'a', 0]).unwrap(),
+            "\u{fffd}a"
+        );
     }
 }
