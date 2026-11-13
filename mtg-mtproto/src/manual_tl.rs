@@ -244,6 +244,7 @@ impl GzipPacked {
     pub fn new(unpacked_data: &[u8]) -> Self {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
         // Safe to unwrap, in-memory data should not fail
+        // writing to and finishing an in-memory `Vec` encoder cannot fail
         encoder.write_all(unpacked_data).unwrap();
         let packed_data = encoder.finish().unwrap();
         Self { packed_data }

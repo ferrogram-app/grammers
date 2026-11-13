@@ -83,6 +83,7 @@ impl<T: Transport, M: Mtp> State<T, M> {
 
         // TODO make mtp itself use BytesMut to avoid copies
         if let Some(msg_id) = self.mtp.push(&mut self.write_buffer, body) {
+            // invariant: the caller (`Mtp::push`) only produces bodies with a 4-byte constructor id
             assert!(body.len() >= 4);
             let req_id = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
             debug!(
@@ -163,6 +164,7 @@ impl<T: Transport, M: Mtp> State<T, M> {
             self.write_head,
             self.write_buffer.len()
         );
+        // invariant: `write_head` only advances by what was written into the buffer
         assert!(self.write_head <= self.write_buffer.len());
         if self.write_head != self.write_buffer.len() {
             return false;

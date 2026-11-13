@@ -44,6 +44,7 @@ impl Intermediate {
 impl Transport for Intermediate {
     fn pack(&mut self, buffer: &mut DequeBuffer<u8>) {
         let len = buffer.len();
+        // contract: `Mtp` pads every packet to 4 bytes
         assert_eq!(len % 4, 0);
 
         buffer.extend_front(&(len as i32).to_le_bytes());
@@ -59,6 +60,7 @@ impl Transport for Intermediate {
             return Err(Error::MissingBytes);
         }
 
+        // infallible: at least 4 bytes were checked above
         let len = i32::from_le_bytes(buffer[0..4].try_into().unwrap());
         if len < 4 {
             return Err(Error::BadLen { got: len });
@@ -71,6 +73,7 @@ impl Transport for Intermediate {
         }
 
         if len == 4 {
+            // infallible: length was checked above
             let data = i32::from_le_bytes(buffer[4..8].try_into().unwrap());
             return Err(Error::BadStatus {
                 status: data.unsigned_abs(),

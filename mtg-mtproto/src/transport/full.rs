@@ -48,6 +48,7 @@ impl Full {
 impl Transport for Full {
     fn pack(&mut self, buffer: &mut DequeBuffer<u8>) {
         let len = buffer.len();
+        // contract: `Mtp` pads every packet to 4 bytes
         assert_eq!(len % 4, 0);
 
         // payload len + length itself (4 bytes) + send counter (4 bytes) + crc32 (4 bytes)
@@ -75,6 +76,7 @@ impl Transport for Full {
         let total_len = buffer.len() as i32;
 
         // payload len
+        // infallible: at least 4 bytes were checked above
         let len = i32::from_le_bytes(buffer[0..4].try_into().unwrap());
         if len < 12 {
             if len < 0 {
@@ -90,6 +92,7 @@ impl Transport for Full {
         }
 
         // receive counter
+        // infallible: `len >= 12` and `total_len >= len` were checked
         let seq = i32::from_le_bytes(buffer[4..8].try_into().unwrap());
         if seq != self.recv_seq {
             return Err(Error::BadSeq {
@@ -101,6 +104,7 @@ impl Transport for Full {
         let len = len as usize;
 
         // crc32
+        // infallible: `len >= 12` and `total_len >= len` were checked
         let crc = u32::from_le_bytes(buffer[len - 4..len].try_into().unwrap());
 
         let valid_crc = {
@@ -117,6 +121,7 @@ impl Transport for Full {
 
         // A 4-byte payload is a transport error code (e.g. -404), framed like any payload.
         if len == 16 {
+            // infallible: `len == 16` and `total_len >= len` were checked
             let data = i32::from_le_bytes(buffer[8..12].try_into().unwrap());
             return Err(Error::BadStatus {
                 status: data.unsigned_abs(),

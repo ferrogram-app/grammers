@@ -51,6 +51,7 @@ impl Abridged {
 impl Transport for Abridged {
     fn pack(&mut self, buffer: &mut DequeBuffer<u8>) {
         let len = buffer.len();
+        // contract: `Mtp` pads every packet to 4 bytes
         assert_eq!(len % 4, 0);
 
         let len = len / 4;
@@ -83,6 +84,7 @@ impl Transport for Abridged {
 
             header_len = 4;
             // 24 bits, unsigned: a signed shift made lengths with the top bit set negative
+            // infallible: a 4-byte slice was just checked
             (u32::from_le_bytes(buffer[0..4].try_into().unwrap()) >> 8) as usize
         };
 
@@ -94,6 +96,7 @@ impl Transport for Abridged {
         // A 4-byte payload is a transport error code, never a message (the shortest is 20 bytes).
         // Longer payloads start with an auth_key_id, whose first int may well be negative.
         if len == 4 {
+            // infallible: length was checked above
             let data = i32::from_le_bytes(buffer[header_len..header_len + 4].try_into().unwrap());
             return Err(Error::BadStatus {
                 status: data.unsigned_abs(),

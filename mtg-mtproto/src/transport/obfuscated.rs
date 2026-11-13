@@ -50,6 +50,7 @@ impl<T: Transport + Tagged> Obfuscated<T> {
             || init[0] == 0xef // Abridged
             || FORBIDDEN_FIRST_INTS.iter().any(|start| start == &init[..4])
         {
+            // no OS randomness means no safe key: refusing to connect is the only correct outcome
             getrandom::fill(&mut init).unwrap();
         }
 
@@ -88,6 +89,7 @@ impl<T: Transport + Tagged> Transport for Obfuscated<T> {
 
     fn unpack(&mut self, buffer: &mut [u8]) -> Result<UnpackedOffset, Error> {
         if buffer.len() < self.decrypt_tail {
+            // contract: the caller keeps the bytes already decrypted until they are consumed
             panic!("buffer is smaller than what was decrypted");
         }
 
