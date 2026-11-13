@@ -183,6 +183,17 @@ impl Encrypted {
         self.time_offset = correct - now;
     }
 
+    /// Whether a server message id is not older than 300 s nor more than 30 s ahead of our clock.
+    fn msg_id_in_window(&self, msg_id: i64) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time is before epoch")
+            .as_secs() as i64
+            + self.time_offset as i64;
+        let age = now - (msg_id >> 32);
+        (-30..=300).contains(&age)
+    }
+
     /// Generates a new unique message ID based on the current
     /// time (in ms) since epoch, applying a known time offset.
     fn get_new_msg_id(&mut self) -> i64 {
@@ -314,7 +325,22 @@ impl Encrypted {
     fn process_message(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
         // Server ids are odd (lower bits 01 for answers, 11 for the rest).
         if message.msg_id & 1 == 0 {
-            return Err(DeserializeError::BadMessageId { got: message.msg_id });
+            return Err(DeserializeError::BadMessageId {
+                got: message.msg_id,
+            });
+        }
+        // Telegram: drop messages older than 300 s or more than 30 s ahead of our corrected clock.
+        // A bad_msg_notification (and its salt variant) is exempt, because it is how a wrong
+        // clock gets corrected in the first place.
+        let is_bad_msg = matches!(
+            message.constructor_id(),
+            Ok(tl::types::BadMsgNotification::CONSTRUCTOR_ID
+                | tl::types::BadServerSalt::CONSTRUCTOR_ID)
+        );
+        if !is_bad_msg && !self.msg_id_in_window(message.msg_id) {
+            return Err(DeserializeError::BadMessageId {
+                got: message.msg_id,
+            });
         }
         if message.requires_ack() {
             self.pending_ack.push(message.msg_id);
@@ -1573,22 +1599,81 @@ mod tests {
 
     fn pong() -> Vec<u8> {
         use tl::Serializable;
-        tl::enums::Pong::Pong(tl::types::Pong { msg_id: 0, ping_id: 1 }).to_bytes()
+        tl::enums::Pong::Pong(tl::types::Pong {
+            msg_id: 0,
+            ping_id: 1,
+        })
+        .to_bytes()
     }
 
     fn session(m: &Encrypted) -> i64 {
         m.session_id
     }
 
+    /// A valid server msg_id for "now" (odd), `n` steps further.
+    fn fresh(n: i64) -> i64 {
+        at(0, n)
+    }
+
+    /// A server msg_id `secs_ago` seconds in the past.
+    fn at(secs_ago: i64, n: i64) -> i64 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        ((now - secs_ago) << 32) | (4 * n + 1)
+    }
+
+    #[test]
+    fn server_message_ids_must_be_recent() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let s = session(&m);
+        let mut try_id = |id| {
+            m.deserialize(&mut server_packet(s, id, &pong(), None))
+                .is_ok()
+        };
+        assert!(try_id(at(299, 0)));
+        assert!(!try_id(at(301, 1)));
+        assert!(!try_id(at(-60, 2)));
+        assert!(try_id(at(-20, 3)));
+    }
+
+    #[test]
+    fn a_bad_msg_notification_is_accepted_whatever_our_clock_says() {
+        use tl::Serializable;
+        let mut m = Encrypted::build().finish(auth_key());
+        let s = session(&m);
+        let body = tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
+            bad_msg_id: 1,
+            bad_msg_seqno: 1,
+            error_code: 17,
+        })
+        .to_bytes();
+        let r = m.deserialize(&mut server_packet(s, at(-3600, 0), &body, None));
+        assert!(r.is_ok());
+    }
+
     #[test]
     fn a_good_server_packet_is_processed_once() {
         let mut m = Encrypted::build().finish(auth_key());
         let s = session(&m);
-        let n = m.deserialize(&mut server_packet(s, 101, &pong(), None)).unwrap().len();
+        let n = m
+            .deserialize(&mut server_packet(s, fresh(0), &pong(), None))
+            .unwrap()
+            .len();
         assert!(n > 0);
         // the same message again is dropped
-        assert!(m.deserialize(&mut server_packet(s, 101, &pong(), None)).unwrap().is_empty());
-        assert!(m.deserialize(&mut server_packet(s, 105, &pong(), None)).unwrap().len() == n);
+        assert!(
+            m.deserialize(&mut server_packet(s, fresh(0), &pong(), None))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            m.deserialize(&mut server_packet(s, fresh(1), &pong(), None))
+                .unwrap()
+                .len()
+                == n
+        );
     }
 
     #[test]
@@ -1596,8 +1681,12 @@ mod tests {
         let mut m = Encrypted::build().finish(auth_key());
         let s = session(&m);
         assert_eq!(
-            m.deserialize(&mut server_packet(s + 1, 101, &pong(), None)).err(),
-            Some(DeserializeError::BadSessionId { got: s + 1, expected: s })
+            m.deserialize(&mut server_packet(s + 1, fresh(0), &pong(), None))
+                .err(),
+            Some(DeserializeError::BadSessionId {
+                got: s + 1,
+                expected: s
+            })
         );
     }
 
@@ -1606,7 +1695,8 @@ mod tests {
         let mut m = Encrypted::build().finish(auth_key());
         let s = session(&m);
         assert_eq!(
-            m.deserialize(&mut server_packet(s, 100, &pong(), None)).err(),
+            m.deserialize(&mut server_packet(s, 100, &pong(), None))
+                .err(),
             Some(DeserializeError::BadMessageId { got: 100 })
         );
     }
@@ -1619,7 +1709,7 @@ mod tests {
         let mut body = pong();
         body.extend([0u8; 12]);
         for (pad, ok) in [(0, false), (16, true), (1024, true), (1040, false)] {
-            let r = m.deserialize(&mut server_packet(s, 101 + 4 * pad as i64, &body, Some(pad)));
+            let r = m.deserialize(&mut server_packet(s, fresh(pad as i64), &body, Some(pad)));
             assert_eq!(r.is_ok(), ok, "padding {pad}");
         }
     }
@@ -1628,7 +1718,7 @@ mod tests {
     fn a_hostile_length_is_an_error_not_a_panic() {
         let mut m = Encrypted::build().finish(auth_key());
         let s = session(&m);
-        let mut packet = server_packet(s, 101, &pong(), None);
+        let mut packet = server_packet(s, fresh(0), &pong(), None);
         // rewrite the length field (inside the encrypted part: rebuild with a lying length)
         packet.clear();
         let key = AuthKey::from_bytes(auth_key());
@@ -1636,7 +1726,7 @@ mod tests {
         shifted[..248].copy_from_slice(&key.to_bytes()[8..]);
         let mut plain = 0i64.to_le_bytes().to_vec();
         plain.extend(s.to_le_bytes());
-        plain.extend(101i64.to_le_bytes());
+        plain.extend(fresh(0).to_le_bytes());
         plain.extend(1u32.to_le_bytes());
         plain.extend((-5i32).to_le_bytes());
         plain.extend([0u8; 12]);

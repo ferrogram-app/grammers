@@ -168,7 +168,10 @@ impl fmt::Display for DeserializeError {
             }
             Self::BadMessageId { got } => write!(f, "bad server message id (got {got})"),
             Self::BadSessionId { got, expected } => {
-                write!(f, "message of another session (got {got}, expected {expected})")
+                write!(
+                    f,
+                    "message of another session (got {got}, expected {expected})"
+                )
             }
             Self::BadPadding { got } => write!(f, "bad padding length ({got} bytes)"),
             Self::NegativeMessageLength { got } => {
