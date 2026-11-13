@@ -37,7 +37,7 @@
    <rect style="fill:#ffffff" width="510" height="270" x="0" y="0" />
    <g>
       <rect width="149" height="29" x="180" y="0" />
-      <text x="255" y="15">grammers-client</text>
+      <text x="255" y="15">mtg-client</text>
       <path d="M 255,30 v 5 q 0 10 -10 10 H 85 q -10 0 -10 10 V 180" />
       <path d="M 255,30 v 5 q 0 10 -10 10 H 175 q -10 0 -10 10 V 120" />
       <path d="M 255,30 V 60" />
@@ -45,7 +45,7 @@
    </g>
    <g>
       <rect width="149" height="29" x="180" y="60" />
-      <text x="255" y="75">grammers-mtsender</text>
+      <text x="255" y="75">mtg-mtsender</text>
       <path d="M 255,90 v 5 q 0 10 -10 10 H 85 q -10 0 -10 10 V 180" />
       <path d="M 255,90 v 5 q 0 10 -10 10 H 175 q -10 0 -10 10 V 120" />
       <path d="M 255,90 v 5 q 0 10 10 10 H 335 q 10 0 10 10 V 120" />
@@ -53,32 +53,32 @@
    </g>
    <g>
       <rect width="149" height="29" x="90" y="120" />
-      <text x="165" y="135">grammers-session</text>
+      <text x="165" y="135">mtg-session</text>
       <path d="M 90,135 H 85 q -10 0 -10 10 V 180" />
    </g>
    <g>
       <rect width="149" height="29" x="270" y="120" />
-      <text x="345" y="135">grammers-mtproto</text>
+      <text x="345" y="135">mtg-mtproto</text>
       <path d="M 345,150 v 5 q 0 10 -10 10 H 85 q -10 0 -10 10 V 180" />
       <path d="M 345,150 v 5 q 0 10 10 10 H 425 q 10 0 10 10 V 180" />
    </g>
    <g>
       <rect width="149" height="29" x="0" y="180" />
-      <text x="75" y="195">grammers-tl-types</text>
+      <text x="75" y="195">mtg-tl-types</text>
       <path d="M 75,210 V 240" />
       <path d="M 75,210 v 5 q 0 10 10 10 H 245 q 10 0 10 10 V 240" />
    </g>
    <g>
       <rect width="149" height="29" x="360" y="180" />
-      <text x="435" y="195">grammers-crypto</text>
+      <text x="435" y="195">mtg-crypto</text>
    </g>
    <g>
       <rect width="149" height="29" x="0" y="240" />
-      <text x="75" y="255">grammers-tl-gen</text>
+      <text x="75" y="255">mtg-tl-gen</text>
       <path d="M 150,255 H 180" />
    </g>
    <g>
       <rect width="149" height="29" x="180" y="240" />
-      <text x="255" y="255">grammers-tl-parser</text>
+      <text x="255" y="255">mtg-tl-parser</text>
    </g>
 </svg>

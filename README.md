@@ -15,28 +15,28 @@ For the API reference, please refer to <https://docs.rs/grammers-client/>.
 
 ![Diagram depicting the crate hierarchy](assets/crate-hierarchy.svg)
 
-* **[grammers-client]**: high-level API. Depends on:
-  * `grammers-tl-types` to both [invoke requests] and wrap [raw types].
-  * `grammers-session` to persist home [datacenter], logged-in user and [cache peers].
-  * `grammers-mtsender` to connect to Telegram's servers and exchange messages.
-  * `grammers-crypto` to support [Two-Factor Authentication] logins.
-* **[grammers-mtsender]**: network connection to Telegram. Depends on:
-  * `grammers-tl-types` to initialize the connection and offer an ergonomic [RPC interface].
-  * `grammers-session` to persist the DC configuration and corresponding [Authorization Key]s.
-  * `grammers-mtproto` to serialize messages and manage the connection state.
-  * `grammers-crypto` for efficient buffer usage.
-* **[grammers-session]**: session storages for the client. Depends on:
-  * `grammers-tl-types` to provide a more ergonomic interface over peers.
-* **[grammers-mtproto]**: implementation of the [Mobile Transport Protocol]. Depends on:
-  * `grammers-tl-types` to invoke and parse the core messages of the protocol.
-  * `grammers-crypto` to encrypt the communication with Telegram.
-* **[grammers-tl-types]**: generated Rust types for a certain layer. Depends on:
-  * `grammers-tl-gen` to generate the Rust code that makes up the crate itself.
-  * `grammers-tl-parser` to parse the TL files with all definitions used by Telegram.
-* **[grammers-crypto]**: cryptography-related methods.
-* **[grammers-tl-gen]**: Rust code generator from TL definitions. Depends on:
-  * `grammers-tl-parser` to compose functions referencing the parsed definition types.
-* **[grammers-tl-parser]**: a [Type Language] parser.
+* **[mtg-client]**: high-level API. Depends on:
+  * `mtg-tl-types` to both [invoke requests] and wrap [raw types].
+  * `mtg-session` to persist home [datacenter], logged-in user and [cache peers].
+  * `mtg-mtsender` to connect to Telegram's servers and exchange messages.
+  * `mtg-crypto` to support [Two-Factor Authentication] logins.
+* **[mtg-mtsender]**: network connection to Telegram. Depends on:
+  * `mtg-tl-types` to initialize the connection and offer an ergonomic [RPC interface].
+  * `mtg-session` to persist the DC configuration and corresponding [Authorization Key]s.
+  * `mtg-mtproto` to serialize messages and manage the connection state.
+  * `mtg-crypto` for efficient buffer usage.
+* **[mtg-session]**: session storages for the client. Depends on:
+  * `mtg-tl-types` to provide a more ergonomic interface over peers.
+* **[mtg-mtproto]**: implementation of the [Mobile Transport Protocol]. Depends on:
+  * `mtg-tl-types` to invoke and parse the core messages of the protocol.
+  * `mtg-crypto` to encrypt the communication with Telegram.
+* **[mtg-tl-types]**: generated Rust types for a certain layer. Depends on:
+  * `mtg-tl-gen` to generate the Rust code that makes up the crate itself.
+  * `mtg-tl-parser` to parse the TL files with all definitions used by Telegram.
+* **[mtg-crypto]**: cryptography-related methods.
+* **[mtg-tl-gen]**: Rust code generator from TL definitions. Depends on:
+  * `mtg-tl-parser` to compose functions referencing the parsed definition types.
+* **[mtg-tl-parser]**: a [Type Language] parser.
 
 ## Security
 
@@ -44,8 +44,8 @@ It is recommended to always use [cargo-crev] to verify the trustworthiness of ea
 dependencies, including this one.
 
 As far as I know, this code has not been audited, so if, for any reason, you're using this crate
-where security is critical, I strongly encourage you to review at least `grammers-crypto` and the
-authentication part of `grammers-mtproto`. I am not a security expert, although I trust my code
+where security is critical, I strongly encourage you to review at least `mtg-crypto` and the
+authentication part of `mtg-mtproto`. I am not a security expert, although I trust my code
 enough to use it myself.
 
 If you know about some published audit for this crate, please let me know, so that I can link it
@@ -96,17 +96,17 @@ dual licensed as above, without any additional terms or conditions.
 
 [build real projects]: https://codeberg.org/Lonami/grammers/wiki/Real-world-projects
 [RSS bots]: https://codeberg.org/Lonami/srsrssrsbot
-[client examples]: grammers-client/examples
+[client examples]: mtg-client/examples
 [Mobile Transport Protocol]: https://core.telegram.org/mtproto
 [Type Language]: https://core.telegram.org/mtproto/TL
-[grammers-client]: grammers-client/
-[grammers-crypto]: grammers-crypto/
-[grammers-mtproto]: grammers-mtproto/
-[grammers-mtsender]: grammers-mtsender/
-[grammers-session]: grammers-session/
-[grammers-tl-gen]: grammers-tl-gen/
-[grammers-tl-parser]: grammers-tl-parser/
-[grammers-tl-types]: grammers-tl-types/
+[mtg-client]: mtg-client/
+[mtg-crypto]: mtg-crypto/
+[mtg-mtproto]: mtg-mtproto/
+[mtg-mtsender]: mtg-mtsender/
+[mtg-session]: mtg-session/
+[mtg-tl-gen]: mtg-tl-gen/
+[mtg-tl-parser]: mtg-tl-parser/
+[mtg-tl-types]: mtg-tl-types/
 [invoke requests]: https://core.telegram.org/methods
 [raw types]: https://core.telegram.org/schema
 [datacenter]: https://core.telegram.org/api/datacenter

@@ -1,4 +1,7 @@
-# Ferrogram fork
+# mtg (Ferrogram's MTProto stack)
+
+The crates were renamed from `grammers-*` to `mtg-*` (and `grammers_` to `mtg_` in code). The upstream
+license terms stay: `LICENSE-MIT` / `LICENSE-APACHE` and the per-file copyright headers must be kept.
 
 This is the Ferrogram project's own copy of grammers (MIT OR Apache-2.0, original authors keep their
 copyright notices). It is developed independently: `main` here is the line the Ferrogram core builds on.

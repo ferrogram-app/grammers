@@ -28,7 +28,7 @@ def check_fmt_extra():
 	ok = True
 	for root, _dirs, files in os.walk('.'):
 		root = root.replace(os.path.sep, '/')
-		if not root.startswith('./grammers'):
+		if not root.startswith('./mtg'):
 			continue
 		for file in files:
 			if file.lower().endswith('.rs'):
@@ -82,7 +82,7 @@ def check_license():
 	ok = True
 	for root, _dirs, files in os.walk('.'):
 		root = root.replace(os.path.sep, '/')
-		if not root.startswith('./grammers'):
+		if not root.startswith('./mtg'):
 			continue
 		for file in files:
 			if file.lower().endswith('.rs') and not root.endswith('/examples'):

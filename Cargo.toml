@@ -1,26 +1,16 @@
 [workspace]
 members = [
-    "grammers",
-    "grammers-client",
-    "grammers-crypto",
-    "grammers-mtproto",
-    "grammers-mtsender",
-    "grammers-session",
-    "grammers-tl-gen",
-    "grammers-tl-parser",
-    "grammers-tl-types",
+    "mtg",
+    "mtg-client",
+    "mtg-crypto",
+    "mtg-mtproto",
+    "mtg-mtsender",
+    "mtg-session",
+    "mtg-tl-gen",
+    "mtg-tl-parser",
+    "mtg-tl-types",
 ]
 resolver = "2"
-
-[patch.crates-io]
-grammers-client = { path = "grammers-client" }
-grammers-crypto = { path = "grammers-crypto" }
-grammers-mtproto = { path = "grammers-mtproto" }
-grammers-mtsender = { path = "grammers-mtsender" }
-grammers-session = { path = "grammers-session" }
-grammers-tl-gen = { path = "grammers-tl-gen" }
-grammers-tl-parser = { path = "grammers-tl-parser" }
-grammers-tl-types = { path = "grammers-tl-types" }
 
 [workspace.dependencies]
 tracing = "0.1.44"
