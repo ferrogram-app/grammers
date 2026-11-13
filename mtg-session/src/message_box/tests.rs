@@ -753,3 +753,18 @@ fn test_common_and_channel_difference_do_not_duplicate_message() {
 
     assert_eq!(updates.len(), 1);
 }
+
+#[test]
+fn a_state_with_qts_but_no_pts_does_not_panic_when_asking_for_the_difference() {
+    reset_time();
+    let message_boxes = MessageBoxes::load(UpdatesState {
+        pts: NO_PTS,
+        qts: 34,
+        date: 56,
+        seq: 78,
+        channels: Vec::new(),
+    });
+
+    // there is no pts to ask with: nothing to request until the state is fetched
+    assert_eq!(message_boxes.get_difference(), None);
+}

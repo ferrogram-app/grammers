@@ -600,10 +600,9 @@ impl MessageBoxes {
     pub fn get_difference(&self) -> Option<tl::functions::updates::GetDifference> {
         for entry in [Key::Common, Key::Secondary] {
             if self.getting_diff_for.contains(&entry) {
-                let pts = self
-                    .entry(Key::Common)
-                    .map(|entry| entry.pts)
-                    .expect("common entry to exist when getting difference for it");
+                // A qts entry can exist without a pts one (a stored state with pts = 0, or qts
+                // updates before the state was fetched): there is nothing to ask with then.
+                let pts = self.entry(Key::Common).map(|entry| entry.pts)?;
 
                 let gd = tl::functions::updates::GetDifference {
                     pts,
