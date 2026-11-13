@@ -6,9 +6,8 @@ license = "MIT OR Apache-2.0"
 description = """
 A high level client to interact with Telegram's API.
 """
-homepage = "https://codeberg.org/Lonami/grammers"
-documentation = "https://docs.rs/grammers-client"
-repository = "https://codeberg.org/Lonami/grammers"
+homepage = "https://github.com/ferrogram-app/mtg"
+repository = "https://github.com/ferrogram-app/mtg"
 keywords = ["mtproto", "telegram", "tl"]
 categories = ["api-bindings"]
 edition = "2024"

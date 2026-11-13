@@ -1,125 +1,41 @@
-# gramme.rs
+# mtg
 
-A set of Rust crates to interact with Telegram's API, hence the name *(tele)gramme.rs*.
+Rust crates for Telegram's MTProto API, used by [Ferrogram](https://github.com/ferrogram-app).
 
-## Current status
-
-It works! The high-level interface is slowly taking shape, and it can already be used to [build
-real projects], such as [RSS bots].
-
-For an up-to-date taste on how the library looks like, refer to the [client examples] folder.
-
-For the API reference, please refer to <https://docs.rs/grammers-client/>.
+A fork of [grammers](https://codeberg.org/Lonami/grammers) by Lonami.
 
 ## Crates
 
-![Diagram depicting the crate hierarchy](assets/crate-hierarchy.svg)
+Arrows point to a dependency; links implied through another crate are left out.
 
-* **[mtg-client]**: high-level API. Depends on:
-  * `mtg-tl-types` to both [invoke requests] and wrap [raw types].
-  * `mtg-session` to persist home [datacenter], logged-in user and [cache peers].
-  * `mtg-mtsender` to connect to Telegram's servers and exchange messages.
-  * `mtg-crypto` to support [Two-Factor Authentication] logins.
-* **[mtg-mtsender]**: network connection to Telegram. Depends on:
-  * `mtg-tl-types` to initialize the connection and offer an ergonomic [RPC interface].
-  * `mtg-session` to persist the DC configuration and corresponding [Authorization Key]s.
-  * `mtg-mtproto` to serialize messages and manage the connection state.
-  * `mtg-crypto` for efficient buffer usage.
-* **[mtg-session]**: session storages for the client. Depends on:
-  * `mtg-tl-types` to provide a more ergonomic interface over peers.
-* **[mtg-mtproto]**: implementation of the [Mobile Transport Protocol]. Depends on:
-  * `mtg-tl-types` to invoke and parse the core messages of the protocol.
-  * `mtg-crypto` to encrypt the communication with Telegram.
-* **[mtg-tl-types]**: generated Rust types for a certain layer. Depends on:
-  * `mtg-tl-gen` to generate the Rust code that makes up the crate itself.
-  * `mtg-tl-parser` to parse the TL files with all definitions used by Telegram.
-* **[mtg-crypto]**: cryptography-related methods.
-* **[mtg-tl-gen]**: Rust code generator from TL definitions. Depends on:
-  * `mtg-tl-parser` to compose functions referencing the parsed definition types.
-* **[mtg-tl-parser]**: a [Type Language] parser.
+```mermaid
+flowchart TD
+    client[mtg-client] --> mtsender[mtg-mtsender]
+    mtsender --> session[mtg-session]
+    mtsender --> mtproto[mtg-mtproto]
+    session --> types[mtg-tl-types]
+    mtproto --> types
+    mtproto --> crypto[mtg-crypto]
+    types --> gen[mtg-tl-gen]
+    gen --> parser[mtg-tl-parser]
+```
+
+| Crate | What it does |
+|---|---|
+| [mtg-client](mtg-client/) | High-level API: login, dialogs, messages, files, updates ([examples](mtg-client/examples)) |
+| [mtg-mtsender](mtg-mtsender/) | Network connection to Telegram, request/response handling |
+| [mtg-session](mtg-session/) | Session storage (DC keys, peers, update state) and the update gap logic |
+| [mtg-mtproto](mtg-mtproto/) | [MTProto](https://core.telegram.org/mtproto) messages, transports, key exchange |
+| [mtg-crypto](mtg-crypto/) | AES-IGE, RSA, SHA, 2FA (SRP) |
+| [mtg-tl-types](mtg-tl-types/) | Rust types generated from the TL schema (layer in `api.tl`) |
+| [mtg-tl-gen](mtg-tl-gen/), [mtg-tl-parser](mtg-tl-parser/) | TL code generator and parser |
 
 ## Security
 
-It is recommended to always use [cargo-crev] to verify the trustworthiness of each of your
-dependencies, including this one.
-
-As far as I know, this code has not been audited, so if, for any reason, you're using this crate
-where security is critical, I strongly encourage you to review at least `mtg-crypto` and the
-authentication part of `mtg-mtproto`. I am not a security expert, although I trust my code
-enough to use it myself.
-
-If you know about some published audit for this crate, please let me know, so that I can link it
-here and review the issues found.
+Not independently audited. If security is critical for you, review at least `mtg-crypto` and the key
+exchange in `mtg-mtproto`.
 
 ## License
 
-All the libraries and binaries contained in this repository are licensed under either of
-
-* Apache License, Version 2.0 ([LICENSE-APACHE] or
-  http://www.apache.org/licenses/LICENSE-2.0)
-
-* MIT license ([LICENSE-MIT] or http://opensource.org/licenses/MIT)
-
-at your option.
-
-## Contribution
-
-Thank you for considering to contribute! I'll try my best to provide quick, constructive feedback
-on your issues or pull requests. Please do call me out if you think my behaviour is not acceptable
-at any time. I will try to keep the discussion as technical as possible. Similarly, I will not
-tolerate poor behaviour from your side towards other people (including myself).
-
-**Please only submit issues and pull requests authored entirely by you or other fellow humans.**
-If you don't feel capable of authoring code yourself, I encourage you to still try, as I believe
-that's the best way to learn and get better. If you're still not comfortable, please submit a
-feature-request instead, for discussion, so that someone else can implement it instead.
-
-You may use translation assistance if writing English is also not something you're comfortable with.
-But please choose a translation tool that doesn't overly try to rewrite and twist your thoughts.
-Browsers like Firefox have a decently good offline translator built-in that you may use.
-
-It is recommended to run these commands to make the Git experience a bit nicer:
-
-```sh
-git config --local blame.ignoreRevsFile .git-blame-ignore-revs
-cp pre-commit .git/hooks/
-```
-
-If you don't have the time to [contribute code], you may contribute by [reporting issues] or
-feature ideas. Please note that every feature added will increase maintenance burden on my part,
-so be mindful when suggesting things. It may be possible that your idea could exist as its own
-crate, offered as [extensions to grammers].
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions.
-
-[build real projects]: https://codeberg.org/Lonami/grammers/wiki/Real-world-projects
-[RSS bots]: https://codeberg.org/Lonami/srsrssrsbot
-[client examples]: mtg-client/examples
-[Mobile Transport Protocol]: https://core.telegram.org/mtproto
-[Type Language]: https://core.telegram.org/mtproto/TL
-[mtg-client]: mtg-client/
-[mtg-crypto]: mtg-crypto/
-[mtg-mtproto]: mtg-mtproto/
-[mtg-mtsender]: mtg-mtsender/
-[mtg-session]: mtg-session/
-[mtg-tl-gen]: mtg-tl-gen/
-[mtg-tl-parser]: mtg-tl-parser/
-[mtg-tl-types]: mtg-tl-types/
-[invoke requests]: https://core.telegram.org/methods
-[raw types]: https://core.telegram.org/schema
-[datacenter]: https://core.telegram.org/api/datacenter
-[cache peers]: https://core.telegram.org/api/peers
-[Two-Factor Authentication]: https://core.telegram.org/api/srp
-[RPC interface]: https://core.telegram.org/api/invoking
-[Authorization Key]: https://core.telegram.org/mtproto/auth_key
-[scrape-docs]: bin/scrape-docs/
-[tl-to-json]: bin/tl-to-json/
-[tl-json]: https://core.telegram.org/schema/json
-[cargo-crev]: https://crates.io/crates/cargo-crev
-[LICENSE-APACHE]: LICENSE-APACHE
-[LICENSE-MIT]: LICENSE-MIT
-[contribute code]: https://codeberg.org/Lonami/srsrssrsbot/pulls
-[reporting issues]: https://codeberg.org/Lonami/srsrssrsbot/issues/new
-[extensions to grammers]: https://codeberg.org/Lonami/grammers/wiki/Client-extensions
+MIT ([LICENSE-MIT](LICENSE-MIT)) or Apache-2.0 ([LICENSE-APACHE](LICENSE-APACHE)), at your option.
+The original copyright notices of grammers are kept.

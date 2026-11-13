@@ -6,9 +6,8 @@ license = "MIT OR Apache-2.0"
 description = """
 An implementation of the Mobile Transport Protocol.
 """
-homepage = "https://codeberg.org/Lonami/grammers"
-documentation = "https://docs.rs/grammers-mtproto"
-repository = "https://codeberg.org/Lonami/grammers"
+homepage = "https://github.com/ferrogram-app/mtg"
+repository = "https://github.com/ferrogram-app/mtg"
 keywords = ["mtproto", "telegram", "tl"]
 categories = ["network-programming"]
 edition = "2024"
