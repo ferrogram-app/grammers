@@ -7,6 +7,9 @@
 // except according to those terms.
 
 use std::mem;
+
+/// How many server message ids are remembered for duplicate detection.
+const SEEN_MSG_IDS: usize = 512;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use grammers_crypto::{AuthKey, decrypt_data_v2, encrypt_data_v2, get_padding_data_v2};
@@ -92,6 +95,9 @@ pub struct Encrypted {
     /// [Content-related Message]: https://core.telegram.org/mtproto/description#content-related-message
     pending_ack: Vec<i64>,
 
+    /// The ids of the latest server messages, to drop a message the server sent twice.
+    seen_msg_ids: std::collections::VecDeque<i64>,
+
     /// If present, the threshold in bytes at which a message will be
     /// considered large enough to attempt compressing it. Otherwise,
     /// outgoing messages will never be compressed.
@@ -143,6 +149,7 @@ impl Builder {
             sequence: 0,
             last_msg_id: 0,
             pending_ack: vec![],
+            seen_msg_ids: Default::default(),
             compression_threshold: self.compression_threshold,
             deserialization: Vec::new(),
             msg_count: 0,
@@ -305,9 +312,21 @@ impl Encrypted {
     }
 
     fn process_message(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
+        // Server ids are odd (lower bits 01 for answers, 11 for the rest).
+        if message.msg_id & 1 == 0 {
+            return Err(DeserializeError::BadMessageId { got: message.msg_id });
+        }
         if message.requires_ack() {
             self.pending_ack.push(message.msg_id);
         }
+        // Acknowledged above, so the server stops resending, but processed only once.
+        if self.seen_msg_ids.contains(&message.msg_id) {
+            return Ok(());
+        }
+        if self.seen_msg_ids.len() >= SEEN_MSG_IDS {
+            self.seen_msg_ids.pop_front();
+        }
+        self.seen_msg_ids.push_back(message.msg_id);
 
         // Handle all the possible Service Messages:
         // * https://core.telegram.org/mtproto/service_messages
@@ -1317,15 +1336,24 @@ impl Mtp for Encrypted {
 
         let plaintext = decrypt_data_v2(payload, &self.auth_key)?;
 
+        let plaintext_len = plaintext.len();
         let mut buffer = Cursor::from_slice(plaintext);
 
         let _salt = i64::deserialize(&mut buffer)?;
         let session_id = i64::deserialize(&mut buffer)?;
         if session_id != self.session_id {
-            panic!("wrong session id");
+            return Err(DeserializeError::BadSessionId {
+                got: session_id,
+                expected: self.session_id,
+            });
         }
 
-        self.process_message(manual_tl::Message::deserialize(&mut buffer)?)?;
+        let message = manual_tl::Message::deserialize(&mut buffer)?;
+        let padding = plaintext_len - buffer.pos();
+        if !(12..=1024).contains(&padding) {
+            return Err(DeserializeError::BadPadding { got: padding });
+        }
+        self.process_message(message)?;
 
         // For simplicity, and to avoid passing too much stuff around (RPC results, updates),
         // the processing result is stored in self. After processing is done, that temporary
@@ -1521,5 +1549,102 @@ mod tests {
             mtproto.finalize_plain(&mut buffer);
             assert!(buffer.as_ref().windows(4).any(|w| w == GZIP_PACKED_HEADER));
         }
+    }
+
+    /// A packet the way the server builds it: the key shifted by 8 bytes gives the server-to-client direction.
+    fn server_packet(session_id: i64, msg_id: i64, body: &[u8], padding: Option<usize>) -> Vec<u8> {
+        let key = AuthKey::from_bytes(auth_key());
+        let mut shifted = [0u8; 256];
+        shifted[..248].copy_from_slice(&key.to_bytes()[8..]);
+        let mut plain = 0i64.to_le_bytes().to_vec(); // salt
+        plain.extend(session_id.to_le_bytes());
+        plain.extend(msg_id.to_le_bytes());
+        plain.extend(1u32.to_le_bytes());
+        plain.extend((body.len() as u32).to_le_bytes());
+        plain.extend(body);
+        let n = padding.unwrap_or(12 + (16 - (plain.len() + 12) % 16) % 16);
+        plain.extend(vec![0u8; n]);
+        let msg_key = encrypt_data_v2(&mut plain, &AuthKey::from_bytes(shifted));
+        let mut out = key.key_id().to_vec();
+        out.extend(msg_key);
+        out.extend(plain);
+        out
+    }
+
+    fn pong() -> Vec<u8> {
+        use tl::Serializable;
+        tl::enums::Pong::Pong(tl::types::Pong { msg_id: 0, ping_id: 1 }).to_bytes()
+    }
+
+    fn session(m: &Encrypted) -> i64 {
+        m.session_id
+    }
+
+    #[test]
+    fn a_good_server_packet_is_processed_once() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let s = session(&m);
+        let n = m.deserialize(&mut server_packet(s, 101, &pong(), None)).unwrap().len();
+        assert!(n > 0);
+        // the same message again is dropped
+        assert!(m.deserialize(&mut server_packet(s, 101, &pong(), None)).unwrap().is_empty());
+        assert!(m.deserialize(&mut server_packet(s, 105, &pong(), None)).unwrap().len() == n);
+    }
+
+    #[test]
+    fn another_session_is_an_error_not_a_panic() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let s = session(&m);
+        assert_eq!(
+            m.deserialize(&mut server_packet(s + 1, 101, &pong(), None)).err(),
+            Some(DeserializeError::BadSessionId { got: s + 1, expected: s })
+        );
+    }
+
+    #[test]
+    fn even_server_message_ids_are_refused() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let s = session(&m);
+        assert_eq!(
+            m.deserialize(&mut server_packet(s, 100, &pong(), None)).err(),
+            Some(DeserializeError::BadMessageId { got: 100 })
+        );
+    }
+
+    #[test]
+    fn padding_must_be_12_to_1024_bytes() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let s = session(&m);
+        // 32 bytes of header + a 20 byte pong + 12 bytes the pong ignores: already a multiple of 16
+        let mut body = pong();
+        body.extend([0u8; 12]);
+        for (pad, ok) in [(0, false), (16, true), (1024, true), (1040, false)] {
+            let r = m.deserialize(&mut server_packet(s, 101 + 4 * pad as i64, &body, Some(pad)));
+            assert_eq!(r.is_ok(), ok, "padding {pad}");
+        }
+    }
+
+    #[test]
+    fn a_hostile_length_is_an_error_not_a_panic() {
+        let mut m = Encrypted::build().finish(auth_key());
+        let s = session(&m);
+        let mut packet = server_packet(s, 101, &pong(), None);
+        // rewrite the length field (inside the encrypted part: rebuild with a lying length)
+        packet.clear();
+        let key = AuthKey::from_bytes(auth_key());
+        let mut shifted = [0u8; 256];
+        shifted[..248].copy_from_slice(&key.to_bytes()[8..]);
+        let mut plain = 0i64.to_le_bytes().to_vec();
+        plain.extend(s.to_le_bytes());
+        plain.extend(101i64.to_le_bytes());
+        plain.extend(1u32.to_le_bytes());
+        plain.extend((-5i32).to_le_bytes());
+        plain.extend([0u8; 12]);
+        plain.extend(vec![0u8; (16 - plain.len() % 16) % 16]);
+        let msg_key = encrypt_data_v2(&mut plain, &AuthKey::from_bytes(shifted));
+        packet.extend(key.key_id());
+        packet.extend(msg_key);
+        packet.extend(plain);
+        assert!(m.deserialize(&mut packet).is_err());
     }
 }

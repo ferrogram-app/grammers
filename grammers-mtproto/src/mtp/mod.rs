@@ -126,6 +126,12 @@ pub enum DeserializeError {
     /// The server's message ID did not match our expectations.
     BadMessageId { got: i64 },
 
+    /// The message belongs to another session.
+    BadSessionId { got: i64, expected: i64 },
+
+    /// The padding after the message is not 12 to 1024 bytes, as MTProto 2.0 requires.
+    BadPadding { got: usize },
+
     /// The server's message length was not strictly positive.
     NegativeMessageLength { got: i32 },
 
@@ -161,6 +167,10 @@ impl fmt::Display for DeserializeError {
                 write!(f, "bad server auth key (got {got}, expected {expected})")
             }
             Self::BadMessageId { got } => write!(f, "bad server message id (got {got})"),
+            Self::BadSessionId { got, expected } => {
+                write!(f, "message of another session (got {got}, expected {expected})")
+            }
+            Self::BadPadding { got } => write!(f, "bad padding length ({got} bytes)"),
             Self::NegativeMessageLength { got } => {
                 write!(f, "bad server message length (got {got})")
             }

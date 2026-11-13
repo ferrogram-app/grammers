@@ -86,9 +86,11 @@ impl Deserializable for Message {
         let seq_no = i32::deserialize(buf)?;
 
         let len = i32::deserialize(buf)?;
-        assert!(len >= 0);
+        // a hostile length is malformed data, not a reason to panic
+        if len < 0 || len as usize >= Message::MAX_BODY_SIZE {
+            return Err(tl::deserialize::Error::UnexpectedEof);
+        }
         let len = len as usize;
-        assert!(len < Message::MAX_BODY_SIZE);
         let mut body = vec![0; len];
         buf.read_exact(&mut body)?;
 
@@ -174,7 +176,9 @@ impl Deserializable for MessageContainer {
         }
 
         let len = i32::deserialize(buf)?;
-        assert!(len >= 0);
+        if len < 0 {
+            return Err(tl::deserialize::Error::UnexpectedEof);
+        }
         let len = len as usize;
         let mut messages = Vec::with_capacity(len.min(Self::MAXIMUM_LENGTH));
         for _ in 0..len {

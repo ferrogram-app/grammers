@@ -192,7 +192,8 @@ pub fn decrypt_data_v2<'b>(
     // https://core.telegram.org/mtproto/security_guidelines#mtproto-encrypted-messages
     let our_key = sha256!(&auth_key.data[88 + x..88 + x + 32], &plaintext);
 
-    if msg_key != our_key[8..8 + 16] {
+    // constant time: a mismatch must not reveal how many leading bytes were right
+    if !constant_time_eq(&msg_key, &our_key[8..8 + 16]) {
         return Err(Error::MessageKeyMismatch);
     }
 
@@ -457,5 +458,23 @@ mod tests {
         let plaintext = ciphertext;
 
         assert_eq!(plaintext.as_slice(), &expected);
+    }
+}
+
+/// Compares two byte strings without stopping at the first difference.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+#[cfg(test)]
+mod constant_time_tests {
+    use super::constant_time_eq;
+
+    #[test]
+    fn compares_every_byte_and_the_length() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"xbc"));
+        assert!(!constant_time_eq(b"abc", b"ab"));
     }
 }
